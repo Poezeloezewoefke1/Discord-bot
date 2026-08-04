@@ -286,6 +286,25 @@ def test_bot_workflow_timeouts_stay_in_order():
     )
 
 
+def test_shift_length_matches_the_actual_timeout():
+    """/test tells people when the restart is due — that number must be real."""
+    workflow = _workflow("bot.yml")
+    job = workflow["jobs"]["run"]
+
+    declared = int(job["env"]["SHIFT_MINUTES"])
+
+    script = "\n".join(
+        step["run"] for step in job["steps"] if isinstance(step.get("run"), str)
+    )
+    line = [ln for ln in script.splitlines() if "timeout --signal=INT" in ln][0]
+    actual = int(line.split("--kill-after=60s")[1].split("m")[0].strip())
+
+    assert declared == actual, (
+        f"SHIFT_MINUTES says {declared} but the bot is killed after {actual}m — "
+        "/test would report the wrong time until restart"
+    )
+
+
 def test_bot_workflow_can_write_the_state_branch():
     workflow = _workflow("bot.yml")
     assert workflow["permissions"]["contents"] == "write"

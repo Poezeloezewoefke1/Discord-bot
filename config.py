@@ -36,6 +36,11 @@ MAX_FILE_BYTES = 25 * 1024 * 1024
 # Board is edited in place; coalesce bursts of updates into one edit per interval.
 BOARD_REFRESH_INTERVAL = 5.0
 
+# How long this process is expected to run before its host restarts it. Only used
+# to tell people when to expect a gap; the workflow sets it to match its own
+# timeout, and a test pins the two together so they can't drift apart.
+SHIFT_MINUTES = int(os.getenv("SHIFT_MINUTES") or 0)
+
 # How far back the board's "recently finished" section looks.
 FINISHED_WINDOW_DAYS = 7
 

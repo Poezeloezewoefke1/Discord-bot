@@ -165,12 +165,51 @@ To back up or reset everything, that one branch is all your data.
 | `/setup` | Admins | Connects roles and channels |
 | `/setup-show` | Admins | Shows current configuration |
 | `/board-refresh` | Admins | Forces the board to redraw |
+| `/test` | Anyone | Checks the bot is online and everything is set up correctly |
+| `/ping` | Anyone | Quick "are you awake?" check |
 | `/welcome-setup` | Admins | Sets up welcome messages, auto-role and goodbyes |
 | `/welcome-test` | Admins | Previews the welcome message on yourself |
 | `/welcome-off` | Admins | Turns welcomes, goodbyes and auto-role back off |
 
 Everything the bot says back to you is ephemeral — only you see it, so channels stay clean.
 Build numbers autocomplete as you type, and `/update` and `/release` list *your* builds first.
+
+## Checking it's working
+
+`/test` is the "is this thing on?" command. It reports whether the bot is online, how long until it
+restarts, and then actually re-checks every piece of setup rather than assuming it's still valid:
+
+```
+🩺 Everything works
+
+Connection
+  ✅ Online and responding
+  • Ping: 82 ms
+  • Running for 2h 14m, restarts in about 3h 16m
+
+Build board
+  ✅ Builder role: @Builder
+  ✅ Script writer role: @Script Writer
+  ✅ Requests channel: #build-requests
+  ✅ Board channel: #build-board
+
+Welcome messages
+  ✅ Welcome channel: #welcome
+  ✅ Points to: #applications
+  ✅ Auto-role: @Member
+
+Data
+  ✅ Database readable
+  • 🟡 2 open · 🔨 3 being built · ✅ 4 finished
+```
+
+It's worth running after any change to your server, because most of what breaks this bot breaks
+silently: a channel deleted, a permission removed, or roles reordered so auto-role quietly stops
+working. `/test` turns each of those into a red line naming the fix, instead of you finding out when
+a new member gets no role.
+
+`/ping` is the instant version — just confirms the bot is awake, which is the usual question during
+a restart gap.
 
 ## Welcoming new members
 

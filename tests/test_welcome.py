@@ -266,3 +266,26 @@ def test_member_count_is_skipped_when_discord_does_not_report_it():
 )
 def test_ordinals(number, expected):
     assert embeds.ordinal(number) == expected
+
+
+# --------------------------------------------------------------------------
+# /test helpers
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "seconds,expected",
+    [
+        (0, "under a minute"),
+        (59, "under a minute"),
+        (60, "1m"),
+        (90, "1m"),
+        (3600, "1h"),
+        (3660, "1h 1m"),
+        (19800, "5h 30m"),
+        (-50, "under a minute"),
+    ],
+)
+def test_human_duration(seconds, expected):
+    from cogs.health import human_duration
+
+    assert human_duration(seconds) == expected

@@ -25,7 +25,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("buildboard")
 
-COGS = ("cogs.setup", "cogs.builds", "cogs.welcome")
+COGS = ("cogs.setup", "cogs.builds", "cogs.welcome", "cogs.health")
 
 
 class BuildBoardBot(commands.Bot):
@@ -35,6 +35,9 @@ class BuildBoardBot(commands.Bot):
         # section. This is a privileged intent — enable it in the Developer Portal.
         intents.members = True
         super().__init__(command_prefix="!", intents=intents, help_command=None)
+        # When this process started — /test reports it, which matters on a host
+        # that restarts the bot on a schedule.
+        self.started_at = discord.utils.utcnow()
 
     async def setup_hook(self) -> None:
         db.init_db()

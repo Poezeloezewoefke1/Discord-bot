@@ -41,6 +41,9 @@ jobs:
       DB_PATH: ${{ github.workspace }}/buildboard.db
       SCHEMATIC_DIR: ${{ github.workspace }}/schematics
       STATE_BRANCH: bot-data
+      # Must match the `timeout ... 330m` below — /test uses it to say how long
+      # is left in this shift. A test asserts the two stay equal.
+      SHIFT_MINUTES: 330
 
     steps:
       - uses: actions/checkout@v4

@@ -57,6 +57,32 @@ def check_builder(member: discord.Member) -> None:
         raise config.ConfigError(f"Only <@&{role_id}> can do that.")
 
 
+def missing_role_permissions(guild: discord.Guild, role: discord.Role) -> str | None:
+    """Why the bot can't hand out this role, phrased as something to go fix.
+
+    Discord's own failure here is a bare 403 on every join, so it's worth catching
+    up front instead of it silently never working.
+    """
+    me = guild.me
+    if not me.guild_permissions.manage_roles:
+        return (
+            "I don't have the **Manage Roles** permission, so I can't give anyone a role.\n"
+            "Add it in **Server Settings → Roles → my role**."
+        )
+    if role >= me.top_role:
+        return (
+            f"{role.mention} sits above my own role, and Discord won't let me hand out a "
+            f"role higher than mine.\n"
+            f"In **Server Settings → Roles**, drag my role (**{me.top_role.name}**) "
+            f"above {role.mention}."
+        )
+    if role.is_default():
+        return "`@everyone` is given out automatically — pick a real role."
+    if role.managed:
+        return f"{role.mention} is managed by an integration, so nobody can assign it manually."
+    return None
+
+
 def check_can_delete(member: discord.Member, build: sqlite3.Row) -> None:
     """Only the person who asked for the build, or an admin, may delete it.
 
