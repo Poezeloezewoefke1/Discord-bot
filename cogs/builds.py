@@ -107,7 +107,7 @@ class BuildsCog(commands.Cog):
     @app_commands.describe(
         build="Which build you're updating",
         status="What this update means for the build",
-        file="Your schematic (.schem, .schematic, .litematic, .nbt or .zip)",
+        file="Click this option to attach your schematic (.schem, .litematic, .nbt, .zip)",
         note="What you did, or what's left to do",
     )
     @app_commands.choices(status=STATUS_CHOICES)
@@ -194,16 +194,32 @@ class BuildsCog(commands.Cog):
         if kind == db.KIND_PROGRESS:
             confirmation = f"Progress saved on **#{build}** — it's still yours."
         elif kind == db.KIND_HANDOFF:
-            confirmation = f"**#{build}** is open again — the next builder continues from your file."
+            # Deliberately doesn't promise "continues from your file" — the file
+            # line below says whether there actually is one.
+            confirmation = f"**#{build}** is open again for the next builder."
         else:
             confirmation = f"**#{build}** marked finished. Nice one."
 
-        if stored_name is None and kind != db.KIND_PROGRESS and db.schematic_count(build) == 0:
+        # Always say what happened to the file. Without this, an attachment that
+        # never reached the command looks like the bot lost it.
+        if stored_name:
             confirmation += (
-                "\n\n⚠️ No schematic has ever been uploaded for this build, so the next "
-                "builder has nothing to continue from. Consider running `/update` again "
-                "with a file attached."
+                f"\n\n📎 Saved `{stored_name}` as **{embeds.version_label(build)}**."
             )
+        else:
+            existing = db.schematic_count(build)
+            confirmation += (
+                "\n\n⚠️ **No file came through with that command.**\n"
+                "Attach one by clicking the `file:` option in the command itself — "
+                "dragging a file into the chat box does *not* attach it to a command.\n"
+            )
+            if existing:
+                confirmation += f"The latest schematic on this build is still **v{existing}**."
+            elif kind != db.KIND_PROGRESS:
+                confirmation += (
+                    "This build still has **no schematic at all**, so the next builder "
+                    "has nothing to continue from."
+                )
 
         await interaction.followup.send(embed=embeds.success(confirmation), ephemeral=True)
 

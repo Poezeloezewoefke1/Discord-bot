@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import pathlib
+import re
 import shutil
 import sqlite3
 
@@ -369,10 +370,21 @@ async def store_attachment(build_id: int, attachment: discord.Attachment) -> tup
     # Prefix with the version number so the handoff history stays readable on disk
     # and re-uploading the same filename never overwrites an earlier version.
     version = db.schematic_count(build_id) + 1
-    safe_name = discord.utils.escape_markdown(attachment.filename).replace("/", "_")
-    path = folder / f"v{version}_{safe_name}"
+    path = folder / f"v{version}_{safe_filename(attachment.filename)}"
     await attachment.save(path)
     return str(path), attachment.filename
+
+
+def safe_filename(name: str) -> str:
+    """Turn a user-supplied filename into something safe to write to disk.
+
+    The name comes from whoever uploaded the file, so it must not be trusted to
+    stay inside the build's folder — PurePath(...).name drops any directory parts
+    and the whitelist removes anything else that could be interpreted as a path.
+    """
+    name = pathlib.PurePath(name.replace("\\", "/")).name
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".")
+    return cleaned[:120] or "schematic"
 
 
 async def send_latest_schematic(interaction: discord.Interaction, build_id: int) -> None:

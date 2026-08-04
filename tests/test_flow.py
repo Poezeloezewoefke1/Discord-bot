@@ -203,6 +203,81 @@ def test_non_schematic_files_are_rejected(filename):
     assert config.is_allowed_file(filename) is False
 
 
+def test_stored_filenames_keep_their_real_name():
+    """Underscores must survive — escape_markdown used to turn them into '\\_'."""
+    import service
+
+    assert service.safe_filename("spawn_house.schem") == "spawn_house.schem"
+    assert service.safe_filename("Nether-Hub v2.litematic") == "Nether-Hub_v2.litematic"
+
+
+@pytest.mark.parametrize(
+    "attacker_name",
+    [
+        "../../../etc/passwd",
+        "..\\..\\windows\\system32\\evil.schem",
+        "/absolute/path.schem",
+        "....//....//escape.schem",
+    ],
+)
+def test_stored_filenames_cannot_escape_the_build_folder(attacker_name):
+    """Filenames come from whoever uploads, so they must not steer the write."""
+    import service
+
+    safe = service.safe_filename(attacker_name)
+    assert "/" not in safe and "\\" not in safe
+    assert not safe.startswith(".")
+    assert (config.build_storage_dir(1) / safe).parent == config.build_storage_dir(1)
+
+
+def test_safe_filename_always_returns_something():
+    import service
+
+    assert service.safe_filename("") == "schematic"
+    assert service.safe_filename("...") == "schematic"
+    assert len(service.safe_filename("x" * 500)) <= 120
+
+
+def test_update_without_a_file_does_not_hide_earlier_schematics():
+    """A note-only update must not read as 'the schematic is gone'."""
+    import embeds
+
+    build_id = new_build()
+    db.add_update(build_id, BUILDER_A, db.KIND_PROGRESS, None, "a.schem", "/x/a.schem")
+    db.add_update(build_id, BUILDER_A, db.KIND_PROGRESS, "just a note")
+
+    embed = embeds.update_post(
+        db.get_build(build_id), FakeUser(), db.KIND_PROGRESS, "just a note", None
+    )
+    value = [f.value for f in embed.fields if f.name == "Schematic"][0]
+    assert "v1" in value, f"should point at the existing schematic, said: {value}"
+    assert "none" not in value.lower()
+
+
+def test_update_with_a_file_names_it():
+    import embeds
+
+    build_id = new_build()
+    db.add_update(build_id, BUILDER_A, db.KIND_PROGRESS, None, "spawn.schem", "/x/a.schem")
+
+    embed = embeds.update_post(
+        db.get_build(build_id), FakeUser(), db.KIND_PROGRESS, "walls", "spawn.schem"
+    )
+    value = [f.value for f in embed.fields if f.name == "Schematic"][0]
+    assert "spawn.schem" in value and "v1" in value
+
+
+def test_a_build_with_no_files_says_so():
+    import embeds
+
+    build_id = new_build()
+    embed = embeds.update_post(
+        db.get_build(build_id), FakeUser(), db.KIND_PROGRESS, "starting", None
+    )
+    value = [f.value for f in embed.fields if f.name == "Schematic"][0]
+    assert "none uploaded yet" in value
+
+
 def test_unknown_update_kind_is_rejected():
     build_id = new_build()
     with pytest.raises(ValueError):

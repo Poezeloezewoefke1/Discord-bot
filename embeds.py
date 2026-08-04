@@ -113,11 +113,16 @@ def update_post(
     embed.set_author(name=builder.display_name, icon_url=builder.display_avatar.url)
     embed.add_field(name="Build", value=f"#{build['id']} · {build['title']}", inline=True)
 
+    # Distinguish "this update carried no file" from "this build has never had one",
+    # so an update without an attachment doesn't look like the earlier work vanished.
     version = version_label(build["id"])
-    if file_name and version:
-        embed.add_field(name="Schematic", value=f"**{version}** · `{file_name}`", inline=True)
+    if file_name:
+        value = f"**{version}** · `{file_name}`" if version else f"`{file_name}`"
+    elif version:
+        value = f"no new file — latest is still **{version}**"
     else:
-        embed.add_field(name="Schematic", value="none attached", inline=True)
+        value = "none uploaded yet"
+    embed.add_field(name="Schematic", value=value, inline=True)
 
     if kind == db.KIND_HANDOFF:
         embed.set_footer(text=f"Anyone with the builder role can now claim #{build['id']}")
