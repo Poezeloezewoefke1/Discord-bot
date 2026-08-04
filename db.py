@@ -92,7 +92,8 @@ CREATE TABLE IF NOT EXISTS youtube_feeds (
     last_video_id TEXT,
     last_checked  TEXT,
     last_error    TEXT,
-    initialised   INTEGER NOT NULL DEFAULT 0
+    initialised   INTEGER NOT NULL DEFAULT 0,
+    feed_kind     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS announced_videos (
@@ -176,15 +177,30 @@ LATER_CONFIG_COLUMNS = (
 
 LATER_CONFIG_NAMES = tuple(name for name, _ in LATER_CONFIG_COLUMNS)
 
+# Columns added to youtube_feeds after that table first shipped. Same problem as
+# guild_config: the table already exists in the live database, so CREATE TABLE
+# IF NOT EXISTS won't touch it.
+LATER_FEED_COLUMNS = (
+    ("feed_kind", "TEXT"),
+)
+
+LATER_COLUMNS = {
+    "guild_config": LATER_CONFIG_COLUMNS,
+    "youtube_feeds": LATER_FEED_COLUMNS,
+}
+
 
 def _add_missing_columns(conn: sqlite3.Connection) -> list[str]:
-    """Bring an older guild_config up to date. Safe to run on every start."""
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(guild_config)")}
+    """Bring older tables up to date. Safe to run on every start."""
     added = []
-    for column, decl in LATER_CONFIG_COLUMNS:
-        if column not in existing:
-            conn.execute(f"ALTER TABLE guild_config ADD COLUMN {column} {decl}")
-            added.append(column)
+    for table, columns in LATER_COLUMNS.items():
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing:
+            continue  # table not created yet; the schema above will handle it
+        for column, decl in columns:
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                added.append(f"{table}.{column}")
     return added
 
 
@@ -389,7 +405,10 @@ def list_feeds() -> list[sqlite3.Row]:
 
 
 def save_feed(handle: str, **fields) -> None:
-    allowed = {"channel_id", "title", "last_video_id", "last_checked", "last_error", "initialised"}
+    allowed = {
+        "channel_id", "title", "last_video_id",
+        "last_checked", "last_error", "initialised", "feed_kind",
+    }
     unknown = set(fields) - allowed
     if unknown:
         raise ValueError(f"unknown feed fields: {sorted(unknown)}")

@@ -85,6 +85,22 @@ class NotifyCog(commands.Cog):
         log.info("resolved %s -> %s", handle, channel_id)
         return channel_id
 
+    async def fetch_videos(self, channel_id: str) -> tuple[list, str | None]:
+        """Try each feed source until one returns videos.
+
+        The plain channel feed omits Shorts, so a Shorts-only channel reads as
+        completely empty through it. The uploads playlist covers both, so it is
+        tried first and the channel feed is the fallback.
+        """
+        for name, url in notify.feed_candidates(channel_id):
+            xml = await self.fetch(url)
+            if xml is None:
+                continue
+            videos = notify.parse_feed(xml)
+            if videos:
+                return videos, name
+        return [], None
+
     async def check_creator(self, creator: dict) -> list:
         """Poll one channel. Returns the videos that should be announced now."""
         handle = creator["handle"]
@@ -92,14 +108,16 @@ class NotifyCog(commands.Cog):
         if channel_id is None:
             return []
 
-        xml = await self.fetch(notify.feed_url(channel_id))
-        if xml is None:
-            db.save_feed(handle, last_error="feed fetch failed", last_checked=db.now_iso())
-            return []
-
-        videos = notify.parse_feed(xml)
+        videos, source = await self.fetch_videos(channel_id)
         if not videos:
-            db.save_feed(handle, last_error="feed had no videos", last_checked=db.now_iso())
+            db.save_feed(
+                handle,
+                last_error=(
+                    "no videos in any feed — if this channel only has Shorts, "
+                    "YouTube may not be publishing them yet"
+                ),
+                last_checked=db.now_iso(),
+            )
             return []
 
         feed = db.get_feed(handle)
@@ -115,8 +133,10 @@ class NotifyCog(commands.Cog):
                 last_video_id=videos[0].video_id,
                 last_checked=db.now_iso(),
                 last_error=None,
+                feed_kind=source,
             )
-            log.info("%s: first check, marked %d existing videos as seen", handle, len(videos))
+            log.info("%s: first check via %s, marked %d existing videos as seen",
+                     handle, source, len(videos))
             return []
 
         fresh = []
@@ -129,6 +149,7 @@ class NotifyCog(commands.Cog):
             last_video_id=videos[0].video_id,
             last_checked=db.now_iso(),
             last_error=None,
+            feed_kind=source,
         )
         db.prune_announced(handle)
         return fresh
@@ -277,10 +298,77 @@ class NotifyCog(commands.Cog):
             lines.append(f"{state} **{creator['name']}** · `{feed['channel_id']}` · checked {when}")
             if feed["last_error"]:
                 lines.append(f"    {feed['last_error']}")
-            lines.append(f"    {db.count_announced(creator['handle'])} videos known")
+            source = feed["feed_kind"] or "not determined yet"
+            lines.append(
+                f"    via *{source}* · {db.count_announced(creator['handle'])} videos known"
+            )
 
         await interaction.response.send_message(
             embed=embeds.notice("\n".join(lines)), ephemeral=True
+        )
+
+    @app_commands.command(
+        name="notify-latest", description="Announce a channel's newest video right now"
+    )
+    @app_commands.describe(creator="Which channel's latest video to post")
+    @app_commands.choices(
+        creator=[
+            app_commands.Choice(name=c["name"], value=c["handle"]) for c in notify.CREATORS
+        ]
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.guild_only()
+    async def notify_latest(
+        self, interaction: discord.Interaction, creator: app_commands.Choice[str]
+    ) -> None:
+        """Escape hatch for a video that was already recorded as seen.
+
+        The first check for a channel records its whole backlog silently, so a
+        video uploaded just before the bot started watching never announces.
+        This posts it on demand rather than leaving it stuck.
+        """
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        entry = next((c for c in notify.CREATORS if c["handle"] == creator.value), None)
+        if entry is None:
+            await interaction.followup.send(
+                embed=embeds.error("Unknown channel."), ephemeral=True
+            )
+            return
+
+        channel_id = await self.resolve_channel_id(entry["handle"])
+        if channel_id is None:
+            await interaction.followup.send(
+                embed=embeds.error(
+                    f"Couldn't resolve **{entry['name']}** — YouTube didn't return a channel id."
+                ),
+                ephemeral=True,
+            )
+            return
+
+        videos, source = await self.fetch_videos(channel_id)
+        if not videos:
+            await interaction.followup.send(
+                embed=embeds.error(
+                    f"**{entry['name']}** has no videos in either feed.\n"
+                    "If the channel has only Shorts, YouTube may not have published them to "
+                    "its feeds yet — that can take a while after upload."
+                ),
+                ephemeral=True,
+            )
+            return
+
+        newest = videos[0]
+        db.mark_announced(newest.video_id, entry["handle"])
+        db.save_feed(entry["handle"], initialised=1, feed_kind=source, last_error=None)
+        posted = await self.announce(newest, entry)
+
+        await interaction.followup.send(
+            embed=embeds.success(
+                f"Posted **{newest.title}** in {posted} channel(s).\n"
+                f"Found via the *{source}*."
+            ),
+            ephemeral=True,
         )
 
     @app_commands.command(name="notify-check", description="Check for new uploads right now")

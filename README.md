@@ -176,6 +176,7 @@ To back up or reset everything, that one branch is all your data.
 | `/notify-setup` | Admins | Chooses where new YouTube uploads are announced |
 | `/notify-test` | Admins | Checks the upload watcher is alive and both feeds resolve |
 | `/notify-check` | Admins | Checks for new uploads right now |
+| `/notify-latest` | Admins | Posts a channel's newest video on demand |
 | `/ticket-setup` | Admins | Sets up the ticket system and posts the panel |
 | `/ticket-panel` | Admins | Posts the panel again if it gets deleted |
 | `/ticket-add` | Support | Adds someone to the ticket you're in |
@@ -271,9 +272,19 @@ The channels being watched are fixed in `CREATORS` at the top of `notify.py`:
 - [@Pyro_Blits](https://www.youtube.com/@Pyro_Blits)
 - [@Microman_J](https://www.youtube.com/@Microman_J)
 
-It uses YouTube's public per-channel Atom feed — no API key, no scraping, nothing to expire. The
-`@handle` is resolved to the underlying `UC…` channel id once and cached, so renaming a channel
-doesn't need a code change. Checked every 5 minutes.
+It uses YouTube's public Atom feeds — no API key, no scraping, nothing to expire. The `@handle` is
+resolved to the underlying `UC…` channel id once and cached, so renaming a channel doesn't need a
+code change. Checked every 5 minutes.
+
+### Shorts
+
+**The plain channel feed leaves Shorts out**, so a channel that has only posted Shorts looks
+completely empty through it. The bot therefore tries the channel's *uploads playlist* feed first
+(`playlist_id=UU…`, the same id with the prefix swapped), which covers both, and falls back to the
+channel feed. `/notify-test` shows which source each channel is being read through.
+
+If Shorts still don't appear, YouTube simply hasn't published them to any feed yet — that can lag
+well behind the upload. `/notify-latest` posts the newest video on demand in the meantime.
 
 **Existing videos are never announced.** The first check for a channel records the whole backlog as
 seen and posts nothing — otherwise setup would fire fifteen `@everyone` pings at once. Seen videos

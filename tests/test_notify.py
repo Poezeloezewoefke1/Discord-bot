@@ -332,3 +332,78 @@ def test_announcement_survives_a_video_with_no_thumbnail():
     )
     embed = embeds.upload_announcement(video, "Pyro_Blits")
     assert embed.title == "No thumb"
+
+
+# --------------------------------------------------------------------------
+# Shorts
+#
+# The plain channel feed omits Shorts, so a Shorts-only channel reads as
+# completely empty through it — which is exactly what happened live:
+# @Pyro_Blits resolved fine but reported "feed had no videos".
+# --------------------------------------------------------------------------
+
+def test_uploads_playlist_id_is_the_channel_id_with_uu():
+    assert notify.uploads_playlist_id("UC9ZAWlyBbUpbvMnPlu692Ww") == "UU9ZAWlyBbUpbvMnPlu692Ww"
+
+
+def test_uploads_playlist_id_leaves_anything_else_alone():
+    assert notify.uploads_playlist_id("PL12345") == "PL12345"
+
+
+def test_playlist_feed_url_uses_the_playlist_parameter():
+    url = notify.playlist_feed_url("UC9ZAWlyBbUpbvMnPlu692Ww")
+    assert "playlist_id=UU9ZAWlyBbUpbvMnPlu692Ww" in url
+    assert "channel_id=" not in url
+
+
+def test_the_uploads_playlist_is_tried_before_the_channel_feed():
+    """It's the one that includes Shorts, so it has to come first."""
+    candidates = notify.feed_candidates("UC9ZAWlyBbUpbvMnPlu692Ww")
+    assert [name for name, _ in candidates] == ["uploads playlist", "channel feed"]
+    assert "playlist_id=UU" in candidates[0][1]
+    assert "channel_id=UC" in candidates[1][1]
+
+
+def test_both_candidate_urls_are_well_formed():
+    for name, url in notify.feed_candidates("UC9ZAWlyBbUpbvMnPlu692Ww"):
+        assert url.startswith("https://www.youtube.com/feeds/videos.xml?")
+
+
+# --------------------------------------------------------------------------
+# the feeds table gains a column on a database that already has it
+# --------------------------------------------------------------------------
+
+def test_feed_kind_is_stored():
+    db.save_feed(HANDLE, channel_id="UC1", feed_kind="uploads playlist")
+    assert db.get_feed(HANDLE)["feed_kind"] == "uploads playlist"
+
+
+def test_an_older_feeds_table_gains_feed_kind(tmp_path):
+    """The live database already has youtube_feeds without this column."""
+    import sqlite3
+
+    path = tmp_path / "old_feeds.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """CREATE TABLE youtube_feeds (
+               handle TEXT PRIMARY KEY, channel_id TEXT, title TEXT,
+               last_video_id TEXT, last_checked TEXT, last_error TEXT,
+               initialised INTEGER NOT NULL DEFAULT 0);"""
+    )
+    conn.execute(
+        "INSERT INTO youtube_feeds (handle, channel_id, initialised) VALUES (?, ?, 1)",
+        ("@Pyro_Blits", "UC9ZAWlyBbUpbvMnPlu692Ww"),
+    )
+    conn.commit()
+    conn.close()
+
+    db.set_db_path(path)
+    db.init_db()
+
+    feed = db.get_feed("@Pyro_Blits")
+    assert "feed_kind" in feed.keys()
+    assert feed["channel_id"] == "UC9ZAWlyBbUpbvMnPlu692Ww", "existing feed state must survive"
+    assert feed["initialised"] == 1
+
+    db.save_feed("@Pyro_Blits", feed_kind="uploads playlist")
+    assert db.get_feed("@Pyro_Blits")["feed_kind"] == "uploads playlist"

@@ -26,6 +26,7 @@ CREATORS = (
 
 CHANNEL_PAGE = "https://www.youtube.com/{handle}"
 FEED_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+PLAYLIST_FEED_URL = "https://www.youtube.com/feeds/videos.xml?playlist_id={playlist_id}"
 
 # How often the loop runs. 5 minutes is ~288 requests a day per channel, which a
 # public feed tolerates comfortably.
@@ -62,6 +63,34 @@ def channel_page_url(handle: str) -> str:
 
 def feed_url(channel_id: str) -> str:
     return FEED_URL.format(channel_id=channel_id)
+
+
+def uploads_playlist_id(channel_id: str) -> str:
+    """UC… -> UU…, the channel's "all uploads" playlist.
+
+    Every channel has one, and its id is the channel id with the UC prefix
+    swapped for UU.
+    """
+    if not channel_id.startswith("UC"):
+        return channel_id
+    return "UU" + channel_id[2:]
+
+
+def playlist_feed_url(channel_id: str) -> str:
+    return PLAYLIST_FEED_URL.format(playlist_id=uploads_playlist_id(channel_id))
+
+
+# Sources to try, in order. The uploads-playlist feed comes first because the
+# plain channel feed leaves Shorts out — a Shorts-only channel looks completely
+# empty through it, which is exactly what happened to @Pyro_Blits.
+FEED_SOURCES = (
+    ("uploads playlist", playlist_feed_url),
+    ("channel feed", feed_url),
+)
+
+
+def feed_candidates(channel_id: str) -> list[tuple[str, str]]:
+    return [(name, build(channel_id)) for name, build in FEED_SOURCES]
 
 
 def extract_channel_id(page_html: str) -> str | None:
