@@ -177,6 +177,7 @@ To back up or reset everything, that one branch is all your data.
 | `/notify-test` | Admins | Checks the upload watcher is alive and both feeds resolve |
 | `/notify-check` | Admins | Checks for new uploads right now |
 | `/notify-latest` | Admins | Posts a channel's newest video on demand |
+| `/notify-resolve` | Admins | Re-checks which YouTube channel each handle points at |
 | `/ticket-setup` | Admins | Sets up the ticket system and posts the panel |
 | `/ticket-panel` | Admins | Posts the panel again if it gets deleted |
 | `/ticket-add` | Support | Adds someone to the ticket you're in |
@@ -285,6 +286,21 @@ channel feed. `/notify-test` shows which source each channel is being read throu
 
 If Shorts still don't appear, YouTube simply hasn't published them to any feed yet — that can lag
 well behind the upload. `/notify-latest` posts the newest video on demand in the meantime.
+
+### If an upload is announced under the wrong name
+
+A channel page mentions dozens of channel ids — one for every recommended video and featured
+channel — so looking one up has to use the page's *own* markers (`rel="canonical"`,
+`itemprop="identifier"`, `externalId`) rather than the first id that appears. Getting that wrong
+points a handle at a collaborator's channel, and their uploads then get announced under the wrong
+creator.
+
+Two things guard against it now. The announcement takes the creator name from the **feed's own
+author field**, so the video itself says who made it regardless of the mapping. And `/notify-test`
+shows the uploader each feed reports, so a mismatch is visible.
+
+If one is wrong, `/notify-resolve` redoes the lookup. A channel that changes is re-baselined, so its
+back catalogue doesn't all announce at once.
 
 **Existing videos are never announced.** The first check for a channel records the whole backlog as
 seen and posts nothing — otherwise setup would fire fifteen `@everyone` pings at once. Seen videos

@@ -39,8 +39,22 @@ ATOM = {
 }
 
 # YouTube channel ids are always UC + 22 url-safe characters.
-CHANNEL_ID_RE = re.compile(r'"(?:channelId|externalId)"\s*:\s*"(UC[\w-]{22})"')
-CANONICAL_RE = re.compile(r'/channel/(UC[\w-]{22})')
+#
+# Order matters enormously here. A channel page mentions dozens of channel ids —
+# one for every recommended video and featured channel — so a bare "channelId"
+# match returns whichever appears first in the HTML, which is usually somebody
+# else's. That mis-resolved one handle to a collaborator's channel and made the
+# bot announce their uploads under the wrong name.
+#
+# Only the first three identify *this* page's channel. The last is a guess and is
+# used solely because a wrong id is still better than no id at all — and the
+# announcement no longer trusts it for the creator's name.
+CHANNEL_ID_PATTERNS = (
+    ("canonical link", re.compile(r'<link\s+rel="canonical"\s+href="[^"]*?/channel/(UC[\w-]{22})"')),
+    ("itemprop identifier", re.compile(r'<meta\s+itemprop="identifier"\s+content="(UC[\w-]{22})"')),
+    ("externalId", re.compile(r'"externalId"\s*:\s*"(UC[\w-]{22})"')),
+    ("channelId (unreliable)", re.compile(r'"channelId"\s*:\s*"(UC[\w-]{22})"')),
+)
 
 
 @dataclass(frozen=True)
@@ -103,8 +117,21 @@ def extract_channel_id(page_html: str) -> str | None:
     """
     if not page_html:
         return None
-    match = CHANNEL_ID_RE.search(page_html) or CANONICAL_RE.search(page_html)
-    return match.group(1) if match else None
+    for _label, pattern in CHANNEL_ID_PATTERNS:
+        match = pattern.search(page_html)
+        if match:
+            return match.group(1)
+    return None
+
+
+def extract_channel_id_source(page_html: str) -> str | None:
+    """Which pattern the id came from — reported by /notify-test."""
+    if not page_html:
+        return None
+    for label, pattern in CHANNEL_ID_PATTERNS:
+        if pattern.search(page_html):
+            return label
+    return None
 
 
 def extract_channel_title(page_html: str) -> str | None:

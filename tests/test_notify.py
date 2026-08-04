@@ -407,3 +407,102 @@ def test_an_older_feeds_table_gains_feed_kind(tmp_path):
 
     db.save_feed("@Pyro_Blits", feed_kind="uploads playlist")
     assert db.get_feed("@Pyro_Blits")["feed_kind"] == "uploads playlist"
+
+
+# --------------------------------------------------------------------------
+# resolving the RIGHT channel
+#
+# A channel page mentions dozens of channel ids — one per recommended video and
+# featured channel. Taking the first "channelId" match returned a collaborator's
+# channel, so uploads were announced under the wrong creator's name. These pin
+# the ordering that fixes it.
+# --------------------------------------------------------------------------
+
+OWN_ID = "UC9ZAWlyBbUpbvMnPlu692Ww"
+OTHER_ID = "UCvp_MHGfyCcTXbrxQw3criQ"
+
+REALISTIC_PAGE = f'''<html><head>
+<meta property="og:title" content="PyroBlitz">
+<link rel="canonical" href="https://www.youtube.com/channel/{OWN_ID}">
+<meta itemprop="identifier" content="{OWN_ID}">
+</head><body><script>
+var data = {{"contents":[
+  {{"videoRenderer":{{"channelId":"{OTHER_ID}","title":"a collab video"}}}},
+  {{"videoRenderer":{{"channelId":"{OTHER_ID}","title":"another one"}}}}
+],"metadata":{{"channelMetadataRenderer":{{"externalId":"{OWN_ID}"}}}}}};
+</script></body></html>'''
+
+
+def test_the_pages_own_channel_wins_over_a_featured_one():
+    """The exact bug: a collaborator's id appeared first and was picked."""
+    assert notify.extract_channel_id(REALISTIC_PAGE) == OWN_ID
+    assert notify.extract_channel_id(REALISTIC_PAGE) != OTHER_ID
+
+
+def test_the_canonical_link_is_preferred():
+    assert notify.extract_channel_id_source(REALISTIC_PAGE) == "canonical link"
+
+
+def test_itemprop_is_used_when_there_is_no_canonical_link():
+    page = REALISTIC_PAGE.replace('<link rel="canonical"', '<link rel="nothing"')
+    assert notify.extract_channel_id(page) == OWN_ID
+    assert notify.extract_channel_id_source(page) == "itemprop identifier"
+
+
+def test_external_id_is_used_when_the_markup_is_gone():
+    page = REALISTIC_PAGE.replace('<link rel="canonical"', '<link rel="x"')
+    page = page.replace('<meta itemprop="identifier"', '<meta itemprop="x"')
+    assert notify.extract_channel_id(page) == OWN_ID
+    assert notify.extract_channel_id_source(page) == "externalId"
+
+
+def test_a_bare_channel_id_is_the_last_resort_and_says_so():
+    page = f'<html><script>{{"channelId":"{OTHER_ID}"}}</script></html>'
+    assert notify.extract_channel_id(page) == OTHER_ID
+    assert notify.extract_channel_id_source(page) == "channelId (unreliable)"
+
+
+def test_the_two_real_channels_are_never_confused():
+    """Both live handles resolved to different ids; neither may leak into the other."""
+    pyro_page = REALISTIC_PAGE
+    micro_page = REALISTIC_PAGE.replace(OWN_ID, OTHER_ID).replace(OTHER_ID + '","title', OWN_ID + '","title')
+
+    assert notify.extract_channel_id(pyro_page) == OWN_ID
+    assert notify.extract_channel_id(micro_page) == OTHER_ID
+
+
+# --------------------------------------------------------------------------
+# the announcement names whoever the video says uploaded it
+# --------------------------------------------------------------------------
+
+def test_the_announcement_uses_the_feeds_own_author():
+    """Belt and braces: even a wrong handle→channel mapping can't misattribute."""
+    import embeds
+
+    video = notify.parse_feed(
+        atom_feed(("aaaaaaaaaaa", "A video", "2026-08-04T10:00:00+00:00"), author="PyroBlitz")
+    )[0]
+    assert video.author == "PyroBlitz"
+
+    # Called the way the cog calls it: feed author wins over the configured name.
+    embed = embeds.upload_announcement(video, video.author or "Microman_J")
+    assert "PyroBlitz" in embed.description
+    assert "Microman_J" not in embed.description
+
+
+def test_the_configured_name_is_used_when_the_feed_omits_an_author():
+    import embeds
+
+    video = notify.Video(
+        video_id="x", title="T", url="https://y/x",
+        published=None, thumbnail=None, author=None,
+    )
+    embed = embeds.upload_announcement(video, video.author or "Pyro_Blits")
+    assert "Pyro_Blits" in embed.description
+
+
+def test_feed_author_and_id_source_are_stored():
+    db.save_feed(HANDLE, channel_id=OWN_ID, feed_author="PyroBlitz", id_source="canonical link")
+    feed = db.get_feed(HANDLE)
+    assert feed["feed_author"] == "PyroBlitz"
+    assert feed["id_source"] == "canonical link"

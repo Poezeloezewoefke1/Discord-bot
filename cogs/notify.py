@@ -64,10 +64,10 @@ class NotifyCog(commands.Cog):
     # polling
     # ----------------------------------------------------------------------
 
-    async def resolve_channel_id(self, handle: str) -> str | None:
+    async def resolve_channel_id(self, handle: str, force: bool = False) -> str | None:
         """Handle -> UC… id, cached in the database after the first success."""
         feed = db.get_feed(handle)
-        if feed is not None and feed["channel_id"]:
+        if not force and feed is not None and feed["channel_id"]:
             return feed["channel_id"]
 
         page = await self.fetch(notify.channel_page_url(handle))
@@ -80,6 +80,7 @@ class NotifyCog(commands.Cog):
             handle,
             channel_id=channel_id,
             title=notify.extract_channel_title(page or "") or handle,
+            id_source=notify.extract_channel_id_source(page or ""),
             last_error=None,
         )
         log.info("resolved %s -> %s", handle, channel_id)
@@ -150,6 +151,7 @@ class NotifyCog(commands.Cog):
             last_checked=db.now_iso(),
             last_error=None,
             feed_kind=source,
+            feed_author=videos[0].author,
         )
         db.prune_announced(handle)
         return fresh
@@ -167,7 +169,12 @@ class NotifyCog(commands.Cog):
             try:
                 await channel.send(
                     content="@everyone",
-                    embed=embeds.upload_announcement(video, creator["name"]),
+                    # The feed states the author per entry. Trusting that rather
+                    # than which creator we think we're polling means a bad
+                    # handle→channel mapping can never misattribute a video.
+                    embed=embeds.upload_announcement(
+                        video, video.author or creator["name"]
+                    ),
                     # discord.py suppresses @everyone by default, which would give
                     # an announcement that looks right and pings nobody.
                     allowed_mentions=discord.AllowedMentions(everyone=True),
@@ -302,9 +309,74 @@ class NotifyCog(commands.Cog):
             lines.append(
                 f"    via *{source}* · {db.count_announced(creator['handle'])} videos known"
             )
+            # Surfaced rather than auto-checked: display names legitimately differ
+            # from handles ("@Pyro_Blits" vs "PyroBlitz"), so a strict comparison
+            # would cry wolf. A human spots a real mismatch instantly.
+            if feed["feed_author"]:
+                lines.append(
+                    f"    feed says the uploader is **{feed['feed_author']}** "
+                    f"— if that isn't {creator['name']}, run `/notify-resolve`"
+                )
 
         await interaction.response.send_message(
             embed=embeds.notice("\n".join(lines)), ephemeral=True
+        )
+
+    @app_commands.command(
+        name="notify-resolve",
+        description="Re-look-up which YouTube channel each handle points at",
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.guild_only()
+    async def notify_resolve(self, interaction: discord.Interaction) -> None:
+        """Clear and redo the handle→channel lookup.
+
+        The id is cached after the first success, so a stored wrong one stays
+        wrong until it's deliberately redone.
+        """
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        lines = []
+        for creator in notify.CREATORS:
+            handle = creator["handle"]
+            before = db.get_feed(handle)
+            previous = before["channel_id"] if before else None
+
+            channel_id = await self.resolve_channel_id(handle, force=True)
+            if channel_id is None:
+                lines.append(f"❌ **{creator['name']}** — couldn't resolve")
+                continue
+
+            feed = db.get_feed(handle)
+            changed = previous and previous != channel_id
+            if changed:
+                # A different channel means a different backlog. Re-baseline so
+                # its existing videos don't all announce at once.
+                db.save_feed(handle, initialised=0, feed_author=None, last_video_id=None)
+
+            videos, _ = await self.fetch_videos(channel_id)
+            author = videos[0].author if videos else None
+            if author:
+                db.save_feed(handle, feed_author=author)
+
+            mark = "🔄" if changed else "✅"
+            lines.append(
+                f"{mark} **{creator['name']}** → `{channel_id}`"
+                + (f" *(was `{previous}`)*" if changed else "")
+            )
+            lines.append(
+                f"    found via *{feed['id_source'] or 'unknown'}* · "
+                f"feed says the uploader is **{author or 'unknown'}**"
+            )
+
+        await interaction.followup.send(
+            embed=embeds.notice(
+                "**Re-checked which channel each handle points at.**\n\n"
+                + "\n".join(lines)
+                + "\n\nIf a name above doesn't match, that handle is pointing at the wrong "
+                "channel — tell me and I'll pin the id directly."
+            ),
+            ephemeral=True,
         )
 
     @app_commands.command(

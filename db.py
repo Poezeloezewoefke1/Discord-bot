@@ -93,7 +93,9 @@ CREATE TABLE IF NOT EXISTS youtube_feeds (
     last_checked  TEXT,
     last_error    TEXT,
     initialised   INTEGER NOT NULL DEFAULT 0,
-    feed_kind     TEXT
+    feed_kind     TEXT,
+    feed_author   TEXT,
+    id_source     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS announced_videos (
@@ -182,6 +184,8 @@ LATER_CONFIG_NAMES = tuple(name for name, _ in LATER_CONFIG_COLUMNS)
 # IF NOT EXISTS won't touch it.
 LATER_FEED_COLUMNS = (
     ("feed_kind", "TEXT"),
+    ("feed_author", "TEXT"),
+    ("id_source", "TEXT"),
 )
 
 LATER_COLUMNS = {
@@ -406,8 +410,8 @@ def list_feeds() -> list[sqlite3.Row]:
 
 def save_feed(handle: str, **fields) -> None:
     allowed = {
-        "channel_id", "title", "last_video_id",
-        "last_checked", "last_error", "initialised", "feed_kind",
+        "channel_id", "title", "last_video_id", "last_checked",
+        "last_error", "initialised", "feed_kind", "feed_author", "id_source",
     }
     unknown = set(fields) - allowed
     if unknown:
