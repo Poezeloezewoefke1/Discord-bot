@@ -361,6 +361,26 @@ def security_alert(
     return embed
 
 
+def trap_armed(member: discord.abc.User, channel_id: int, action: str) -> discord.Embed:
+    """Posted when staff trip the honeypot and are (correctly) ignored.
+
+    Without this, testing your own trap produces nothing at all, which looks
+    identical to the bot not listening. This is the proof that it is.
+    """
+    embed = discord.Embed(
+        title="🛡️ Trap is armed",
+        description=(
+            f"{member.mention} posted in <#{channel_id}> and was **ignored** — "
+            f"staff are always exempt.\n\n"
+            f"A normal member doing that would have been **{action}**."
+        ),
+        color=config.COLOR_CLAIMED,
+        timestamp=discord.utils.utcnow(),
+    )
+    embed.set_footer(text="This confirms the honeypot is working. Test with an alt for the real thing.")
+    return embed
+
+
 def error(message: str) -> discord.Embed:
     return discord.Embed(description=f"❌ {message}", color=config.COLOR_ERROR)
 

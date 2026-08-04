@@ -171,6 +171,7 @@ To back up or reset everything, that one branch is all your data.
 | `/welcome-test` | Admins | Previews the welcome message on yourself |
 | `/welcome-off` | Admins | Turns welcomes, goodbyes and auto-role back off |
 | `/security-setup` | Admins | Sets up anti-raid and anti-spam protection |
+| `/security-test` | Admins | Checks the protections are armed, and whether *you* are exempt |
 | `/security-mode` | Admins | Switches between watch-only and acting for real |
 
 Everything the bot says back to you is ephemeral — only you see it, so channels stay clean.
@@ -292,6 +293,38 @@ from a log line instead of from your members being banned.
 
 **Staff are never actioned** — the owner, and anyone with Administrator, Manage Server, Ban Members
 or Manage Messages, is skipped before any check runs. You cannot lock yourself out with this.
+
+### Testing it without wondering whether it's broken
+
+Because staff are exempt, **posting in the honeypot yourself will never ban you**. To stop that
+looking like a dead bot, two things exist:
+
+- **`/security-test`** — reports what's armed, whether the bot can actually enforce the action, and
+  states plainly whether *you personally* are exempt.
+- **The "trap is armed" notice** — when staff post in the honeypot, the log says so:
+
+  > 🛡️ **Trap is armed.** @Owner posted in #⛔-do-not-post and was ignored — staff are always
+  > exempt. A normal member doing that would have been **banned**.
+
+  Rate-limited to once every 10 minutes so staff chat can't flood the log.
+
+The only real proof is posting from an account with no staff permissions. Everything above is there
+to make that test interpretable when it doesn't go how you expect.
+
+### Changing one setting at a time
+
+`/security-setup` keeps any setting you don't mention. Re-running it with just
+`raid_joins:10 raid_seconds:60` leaves your account-age threshold and honeypot channel alone, and
+the reply shows the values actually stored — not the ones you typed.
+
+It also warns about thresholds that can never fire: `30 joins in 5 seconds` means six joins a second
+sustained, which looks configured but never triggers.
+
+### Going live
+
+`/security-mode live` checks the bot actually holds the permission for the configured action before
+switching. A "live" mode that can't enforce is worse than watch mode, because it claims protection
+it doesn't have and Discord only says otherwise with a silent 403 at the moment it matters.
 
 ### Turning on scam-link scanning
 

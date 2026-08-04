@@ -260,3 +260,157 @@ def test_unset_watch_mode_means_watching():
     assert watch_only({"security_watch_only": None}) is True
     assert watch_only({"security_watch_only": 1}) is True
     assert watch_only({"security_watch_only": 0}) is False
+
+
+# --------------------------------------------------------------------------
+# the honeypot must be observable
+#
+# It was reported as "not working" when in fact it was working exactly as built:
+# watch mode plus staff exemption produced no output at all, which looks the same
+# as a bot that isn't listening.
+# --------------------------------------------------------------------------
+
+class FakeCog:
+    """Just the notice rate-limiter, without needing a Bot."""
+
+    from cogs.security import SecurityCog
+
+    ARMED_NOTICE_INTERVAL = SecurityCog.ARMED_NOTICE_INTERVAL
+    should_send_armed_notice = SecurityCog.should_send_armed_notice
+
+    def __init__(self):
+        self._armed_notice_at = {}
+
+
+def test_first_staff_trip_is_announced():
+    cog = FakeCog()
+    assert cog.should_send_armed_notice(1, now=0.0) is True
+
+
+def test_repeat_staff_trips_are_suppressed():
+    """Staff chatting in the honeypot must not flood the log."""
+    cog = FakeCog()
+    cog.should_send_armed_notice(1, now=0.0)
+    assert cog.should_send_armed_notice(1, now=30.0) is False
+    assert cog.should_send_armed_notice(1, now=599.0) is False
+
+
+def test_the_notice_returns_after_the_interval():
+    cog = FakeCog()
+    cog.should_send_armed_notice(1, now=0.0)
+    assert cog.should_send_armed_notice(1, now=601.0) is True
+
+
+def test_the_rate_limit_is_per_guild():
+    cog = FakeCog()
+    cog.should_send_armed_notice(1, now=0.0)
+    assert cog.should_send_armed_notice(2, now=0.0) is True
+
+
+# --------------------------------------------------------------------------
+# re-running setup must not quietly undo settings
+# --------------------------------------------------------------------------
+
+def keep_value(existing, column, given, fallback):
+    """Mirrors the keep() helper inside /security-setup."""
+    if given is not None:
+        return given
+    if existing is not None and existing.get(column) is not None:
+        return existing[column]
+    return fallback
+
+
+def test_omitted_settings_are_preserved():
+    """The live server has min_account_age_days=30; re-running to fix the raid
+    window must not silently reset it to the default of 7."""
+    existing = {"min_account_age_days": 30, "raid_join_count": 30, "raid_window_seconds": 5}
+
+    assert keep_value(existing, "min_account_age_days", None, 7) == 30
+    assert keep_value(existing, "raid_join_count", 10, 10) == 10
+    assert keep_value(existing, "raid_window_seconds", 60, 60) == 60
+
+
+def test_defaults_apply_only_when_nothing_is_stored():
+    assert keep_value(None, "min_account_age_days", None, 7) == 7
+    assert keep_value({"min_account_age_days": None}, "min_account_age_days", None, 7) == 7
+
+
+def test_an_explicit_value_always_wins():
+    assert keep_value({"min_account_age_days": 30}, "min_account_age_days", 1, 7) == 1
+
+
+# --------------------------------------------------------------------------
+# raid settings that can never fire
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "joins,seconds,warns",
+    [
+        (30, 5, True),     # what the live server had: 6 joins a second, sustained
+        (100, 10, True),
+        (10, 60, False),   # the usual shape
+        (30, 300, False),
+        (5, 5, False),
+        (None, 60, False),
+        (10, None, False),
+    ],
+)
+def test_impossible_raid_settings_are_flagged(joins, seconds, warns):
+    from cogs.security import raid_rate_warning
+
+    assert bool(raid_rate_warning(joins, seconds)) is warns
+
+
+# --------------------------------------------------------------------------
+# live mode must be able to enforce
+# --------------------------------------------------------------------------
+
+class FakeMe:
+    def __init__(self, **perms):
+        self.guild_permissions = FakePerms(**perms)
+
+
+class PermGuild:
+    def __init__(self, **perms):
+        self.me = FakeMe(**perms)
+
+
+def test_live_mode_is_refused_without_the_permission():
+    from cogs.security import missing_action_permission
+
+    blocker = missing_action_permission(PermGuild(), security.ACTION_BAN)
+    assert blocker is not None and "Ban Members" in blocker
+
+
+def test_live_mode_is_allowed_with_the_permission():
+    from cogs.security import missing_action_permission
+
+    class Perms(FakePerms):
+        pass
+
+    guild = PermGuild()
+    guild.me.guild_permissions.ban_members = True
+    assert missing_action_permission(guild, security.ACTION_BAN) is None
+
+
+def test_alert_only_never_needs_a_permission():
+    from cogs.security import missing_action_permission
+
+    assert missing_action_permission(PermGuild(), security.ACTION_ALERT) is None
+
+
+@pytest.mark.parametrize(
+    "action,attribute",
+    [
+        (security.ACTION_BAN, "ban_members"),
+        (security.ACTION_KICK, "kick_members"),
+        (security.ACTION_TIMEOUT, "moderate_members"),
+    ],
+)
+def test_each_action_checks_its_own_permission(action, attribute):
+    from cogs.security import missing_action_permission
+
+    guild = PermGuild()
+    assert missing_action_permission(guild, action) is not None
+    setattr(guild.me.guild_permissions, attribute, True)
+    assert missing_action_permission(guild, action) is None
