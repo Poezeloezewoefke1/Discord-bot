@@ -163,6 +163,7 @@ To back up or reset everything, that one branch is all your data.
 | `/release <build>` | The builder holding it | Gives it back without uploading |
 | `/delete <build>` | Whoever requested it, or admins | Deletes it for good, after a confirmation |
 | `/move <build> <channel>` | Whoever requested it, or admins | Moves the build's card to another channel |
+| `/repost [build] [channel]` | Admins | Posts build cards again if they've gone missing |
 | `/builds [status]` | Anyone | Lists builds and who's on them |
 | `/build <build>` | Anyone | Full detail on one build, including its handoff history |
 | `/schematic <build>` | Anyone | Downloads the latest schematic |
@@ -489,6 +490,11 @@ board. Discord won't relocate a thread between channels, and deleting a card del
 hanging off it — so if the old thread has discussion in it, the old card is left behind as a
 signpost pointing at the new one rather than taking the conversation with it. If the thread was
 empty, the old card is simply removed.
+
+**If cards go missing**, `/repost` puts them back. The usual cause is changing the requests channel
+in `/setup`: every existing card stays in the old channel while the bot looks in the new one. Run it
+with no arguments to repost everything still to be done — open and in-progress builds, not finished
+ones. Build numbers and progress are kept.
 
 **Deleting is permanent.** `/delete` removes the request, its thread, its whole history and every
 schematic uploaded to it — the confirmation tells you exactly how many files that is before you

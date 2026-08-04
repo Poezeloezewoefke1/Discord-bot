@@ -216,7 +216,11 @@ async def post_to_thread(bot: discord.Client, build_id: int, **send_kwargs) -> N
 
 
 async def move_build_card(
-    bot: discord.Client, build_id: int, target: discord.TextChannel, actor: discord.abc.User
+    bot: discord.Client,
+    build_id: int,
+    target: discord.TextChannel,
+    actor: discord.abc.User,
+    allow_same_channel: bool = False,
 ) -> str:
     """Relocate a build's card to another channel. Returns a summary for the caller.
 
@@ -231,7 +235,7 @@ async def move_build_card(
 
     guild = target.guild
     old_channel = card_channel(bot, build)
-    if old_channel is not None and old_channel.id == target.id:
+    if not allow_same_channel and old_channel is not None and old_channel.id == target.id:
         raise config.ConfigError(f"Build #{build_id} is already in {target.mention}.")
 
     perms = target.permissions_for(guild.me)

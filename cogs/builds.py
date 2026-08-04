@@ -315,6 +315,90 @@ class BuildsCog(commands.Cog):
 
         await interaction.followup.send(embed=embeds.success(summary), ephemeral=True)
 
+    @app_commands.command(
+        name="repost",
+        description="Post the build cards again — use if they've gone missing",
+    )
+    @app_commands.describe(
+        build="Just this one. Leave empty to repost everything still to be done.",
+        channel="Where to post them. Defaults to the requests channel from /setup.",
+    )
+    @app_commands.autocomplete(build=deletable_build_autocomplete)
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.guild_only()
+    async def repost(
+        self,
+        interaction: discord.Interaction,
+        build: int | None = None,
+        channel: discord.TextChannel | None = None,
+    ) -> None:
+        """Re-post cards that are no longer reachable.
+
+        Changing the requests channel in /setup strands every existing card in
+        the old one — the bot then looks in the new channel and finds nothing.
+        """
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        cfg = db.get_config(interaction.guild.id)
+        if channel is None:
+            if cfg is None or not cfg["requests_channel_id"]:
+                await interaction.followup.send(
+                    embed=embeds.error("No requests channel set. Run `/setup` first."),
+                    ephemeral=True,
+                )
+                return
+            channel = interaction.guild.get_channel(cfg["requests_channel_id"])
+            if not isinstance(channel, discord.TextChannel):
+                await interaction.followup.send(
+                    embed=embeds.error("The requests channel is gone. Re-run `/setup`."),
+                    ephemeral=True,
+                )
+                return
+
+        if build is not None:
+            targets = [db.get_build(build)]
+            if targets[0] is None or targets[0]["guild_id"] != interaction.guild.id:
+                await interaction.followup.send(
+                    embed=embeds.error(f"Build #{build} doesn't exist."), ephemeral=True
+                )
+                return
+        else:
+            # "Still to be done" — open and in-progress, not finished ones.
+            targets = [
+                b
+                for status in (db.STATUS_OPEN, db.STATUS_CLAIMED)
+                for b in db.list_builds(interaction.guild.id, status)
+            ]
+            targets.sort(key=lambda b: b["id"])
+
+        if not targets:
+            await interaction.followup.send(
+                embed=embeds.notice("There are no builds waiting to be done."), ephemeral=True
+            )
+            return
+
+        done, failed = [], []
+        for row in targets:
+            try:
+                await service.move_build_card(
+                    self.bot, row["id"], channel, interaction.user, allow_same_channel=True
+                )
+                done.append(f"`#{row['id']:04d}` {row['title']}")
+            except config.ConfigError as exc:
+                failed.append(f"`#{row['id']:04d}` {row['title']} — {exc}")
+
+        message = ""
+        if done:
+            message += f"**Reposted {len(done)} build(s) to {channel.mention}:**\n" + "\n".join(done)
+        if failed:
+            message += ("\n\n**Couldn't repost:**\n" if done else "**Couldn't repost:**\n")
+            message += "\n".join(failed)
+
+        await interaction.followup.send(
+            embed=embeds.success(message) if done else embeds.error(message), ephemeral=True
+        )
+        await service.refresh_board_now(self.bot, interaction.guild)
+
     # ----------------------------------------------------------------------
     # looking things up
     # ----------------------------------------------------------------------

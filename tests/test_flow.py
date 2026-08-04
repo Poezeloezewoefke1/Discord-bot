@@ -714,3 +714,65 @@ def test_moving_does_not_disturb_the_builds_state():
     assert build["status"] == db.STATUS_CLAIMED
     assert build["claimed_by"] == BUILDER_A
     assert db.schematic_count(build_id) == 1
+
+
+# --------------------------------------------------------------------------
+# reposting cards that have gone missing
+#
+# Changing the requests channel in /setup strands every existing card in the old
+# channel — which is exactly what happened live: two open builds had cards from
+# 02:17 while the configured channel was created at 15:46.
+# --------------------------------------------------------------------------
+
+def test_builds_still_to_be_done_are_open_and_claimed_only():
+    """Reposting must not drag finished builds back into the channel."""
+    open_id = new_build("Spawn")
+    claimed_id = new_build("Medieval city")
+    done_id = new_build("Old lobby")
+
+    db.claim_build(claimed_id, BUILDER_A)
+    db.claim_build(done_id, BUILDER_B)
+    db.complete_build(done_id)
+
+    outstanding = [
+        b["id"]
+        for status in (db.STATUS_OPEN, db.STATUS_CLAIMED)
+        for b in db.list_builds(GUILD, status)
+    ]
+    assert sorted(outstanding) == sorted([open_id, claimed_id])
+    assert done_id not in outstanding
+
+
+def test_reposting_repoints_the_card_at_the_new_channel():
+    build_id = new_build()
+    db.attach_message(build_id, message_id=111, thread_id=111, channel_id=None)
+
+    # A card posted before channel_id existed, then reposted somewhere new.
+    db.attach_message(build_id, message_id=999, thread_id=999, channel_id=555)
+
+    build = db.get_build(build_id)
+    assert build["message_id"] == 999
+    assert build["channel_id"] == 555
+
+
+def test_reposting_keeps_the_build_number_and_progress():
+    """The number appears in button ids and in what people call the build."""
+    build_id = new_build()
+    db.claim_build(build_id, BUILDER_A)
+    db.add_update(build_id, BUILDER_A, db.KIND_PROGRESS, None, "a.schem", "/x/a.schem")
+
+    db.attach_message(build_id, 777, 777, 888)
+
+    build = db.get_build(build_id)
+    assert build["id"] == build_id
+    assert build["claimed_by"] == BUILDER_A
+    assert db.schematic_count(build_id) == 1
+
+
+def test_a_build_with_no_card_at_all_can_still_be_reposted():
+    """Nothing about reposting should depend on the old card existing."""
+    build_id = new_build()
+    assert db.get_build(build_id)["message_id"] is None
+
+    db.attach_message(build_id, 123, 123, 456)
+    assert db.get_build(build_id)["message_id"] == 123
