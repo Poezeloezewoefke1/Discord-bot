@@ -48,6 +48,8 @@ COLOR_OPEN = discord.Color.from_str("#f0b232")      # yellow — needs a builder
 COLOR_CLAIMED = discord.Color.from_str("#5865f2")   # blurple — being built
 COLOR_DONE = discord.Color.from_str("#57f287")      # green — finished
 COLOR_ERROR = discord.Color.from_str("#ed4245")     # red — rejected action
+COLOR_GOODBYE = discord.Color.from_str("#e57373")   # soft red — someone left
+
 
 
 class ConfigError(Exception):

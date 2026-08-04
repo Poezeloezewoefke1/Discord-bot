@@ -260,12 +260,50 @@ def welcome_card(
     return embed
 
 
+def membership_length(joined_at) -> str | None:
+    """How long someone was in the server, coarsely: "3 days", "2 months", "1 year".
+
+    Deliberately not the h/m formatter used for uptime in cogs/health.py — that
+    tops out at hours, which is useless for someone who was here eight months.
+    Returns None when Discord didn't tell us when they joined.
+    """
+    if joined_at is None:
+        return None
+
+    seconds = (discord.utils.utcnow() - joined_at).total_seconds()
+    if seconds < 3600:
+        return "less than an hour"
+
+    def plural(value: int, unit: str) -> str:
+        return f"{value} {unit}" if value == 1 else f"{value} {unit}s"
+
+    hours = int(seconds // 3600)
+    if hours < 24:
+        return plural(hours, "hour")
+    days = hours // 24
+    if days < 31:
+        return plural(days, "day")
+    if days < 365:
+        return plural(days // 30, "month")
+    return plural(days // 365, "year")
+
+
 def goodbye_card(member: discord.abc.User, guild: discord.Guild) -> discord.Embed:
-    embed = discord.Embed(
-        description=f"**{member.display_name}** left {guild.name}.",
-        color=config.COLOR_ERROR,
-    )
+    """Laid out like the welcome, so joins and leaves look like one pair."""
+    lines = [f"**{member.display_name}** left the server."]
+
+    # Typed as User, which has no joined_at at all — and even on a Member it can
+    # be None when they weren't cached. Either way, just leave the line out.
+    stayed = membership_length(getattr(member, "joined_at", None))
+    if stayed:
+        lines.append(f"They were here for {stayed}.")
+
+    embed = discord.Embed(description="\n".join(lines), color=config.COLOR_GOODBYE)
+
+    icon = guild.icon.url if guild.icon else None
+    embed.set_author(name=f"Goodbye from {guild.name}"[:256], icon_url=icon)
     embed.set_thumbnail(url=member.display_avatar.url)
+
     if guild.member_count:
         # Not "N members left" — that reads as "N members departed".
         embed.set_footer(text=f"Now {guild.member_count:,} members")

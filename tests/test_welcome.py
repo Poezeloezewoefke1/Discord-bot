@@ -10,6 +10,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import discord
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -289,3 +290,88 @@ def test_human_duration(seconds, expected):
     from cogs.health import human_duration
 
     assert human_duration(seconds) == expected
+
+
+# --------------------------------------------------------------------------
+# the goodbye, laid out to match the welcome
+# --------------------------------------------------------------------------
+
+def _joined(**delta):
+    import datetime
+    return discord.utils.utcnow() - datetime.timedelta(**delta)
+
+
+def test_goodbye_has_the_same_header_as_the_welcome():
+    member = FakeMember()
+    member.joined_at = _joined(days=60)
+    embed = embeds.goodbye_card(member, member.guild)
+    limits_ok(embed)
+
+    assert embed.author.name == "Goodbye from ASTRA Smp Events"
+    assert embed.author.icon_url, "the server icon is what gives it a title bar"
+    assert embed.thumbnail.url
+
+
+def test_goodbye_says_how_long_they_stayed():
+    member = FakeMember()
+    member.joined_at = _joined(days=60)
+    embed = embeds.goodbye_card(member, member.guild)
+    assert "They were here for 2 months." in embed.description
+
+
+def test_goodbye_omits_the_tenure_line_when_the_join_date_is_unknown():
+    """An uncached member has joined_at=None — it must not render as 'None'."""
+    member = FakeMember()
+    member.joined_at = None
+    embed = embeds.goodbye_card(member, member.guild)
+    limits_ok(embed)
+
+    assert "None" not in embed.description
+    assert "were here for" not in embed.description
+    assert "left the server" in embed.description
+    assert embed.author.name  # still has its header
+
+
+def test_goodbye_works_for_an_object_with_no_join_date_at_all():
+    member = FakeMember()  # no joined_at attribute whatsoever
+    embed = embeds.goodbye_card(member, member.guild)
+    limits_ok(embed)
+    assert "left the server" in embed.description
+
+
+def test_goodbye_is_not_the_error_colour():
+    member = FakeMember()
+    member.joined_at = _joined(days=1)
+    assert embeds.goodbye_card(member, member.guild).color != config.COLOR_ERROR
+
+
+def test_goodbye_works_without_a_server_icon():
+    member = FakeMember(guild=FakeGuild(icon=False))
+    member.joined_at = _joined(days=5)
+    embed = embeds.goodbye_card(member, member.guild)
+    limits_ok(embed)
+    assert embed.author.name == "Goodbye from ASTRA Smp Events"
+
+
+@pytest.mark.parametrize(
+    "delta,expected",
+    [
+        ({"seconds": 30}, "less than an hour"),
+        ({"minutes": 59}, "less than an hour"),
+        ({"hours": 1}, "1 hour"),
+        ({"hours": 5}, "5 hours"),
+        ({"days": 1}, "1 day"),
+        ({"days": 2}, "2 days"),
+        ({"days": 30}, "30 days"),
+        ({"days": 45}, "1 month"),
+        ({"days": 90}, "3 months"),
+        ({"days": 400}, "1 year"),
+        ({"days": 800}, "2 years"),
+    ],
+)
+def test_membership_length(delta, expected):
+    assert embeds.membership_length(_joined(**delta)) == expected
+
+
+def test_membership_length_of_unknown_is_none():
+    assert embeds.membership_length(None) is None
