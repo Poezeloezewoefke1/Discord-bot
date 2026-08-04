@@ -670,3 +670,47 @@ def test_version_label_counts_only_files():
     assert embeds.version_label(build_id) is None
     db.add_update(build_id, BUILDER_A, db.KIND_PROGRESS, None, "a.schem", "/x/a.schem")
     assert embeds.version_label(build_id) == "v1"
+
+
+# --------------------------------------------------------------------------
+# moving a build between channels
+# --------------------------------------------------------------------------
+
+def test_a_build_records_which_channel_its_card_is_in():
+    """Without this a moved card can't be found again to refresh it."""
+    build_id = new_build()
+    db.attach_message(build_id, message_id=111, thread_id=222, channel_id=333)
+
+    build = db.get_build(build_id)
+    assert build["message_id"] == 111
+    assert build["thread_id"] == 222
+    assert build["channel_id"] == 333
+
+
+def test_moving_updates_all_three_ids():
+    build_id = new_build()
+    db.attach_message(build_id, 111, 222, 333)
+    db.attach_message(build_id, 444, 555, 666)
+
+    build = db.get_build(build_id)
+    assert (build["message_id"], build["thread_id"], build["channel_id"]) == (444, 555, 666)
+
+
+def test_a_build_from_before_the_move_feature_has_no_channel():
+    """Old rows fall back to the configured requests channel."""
+    build_id = new_build()
+    db.attach_message(build_id, 111, 222)
+    assert db.get_build(build_id)["channel_id"] is None
+
+
+def test_moving_does_not_disturb_the_builds_state():
+    build_id = new_build()
+    db.claim_build(build_id, BUILDER_A)
+    db.add_update(build_id, BUILDER_A, db.KIND_PROGRESS, None, "a.schem", "/x/a.schem")
+
+    db.attach_message(build_id, 999, 888, 777)
+
+    build = db.get_build(build_id)
+    assert build["status"] == db.STATUS_CLAIMED
+    assert build["claimed_by"] == BUILDER_A
+    assert db.schematic_count(build_id) == 1

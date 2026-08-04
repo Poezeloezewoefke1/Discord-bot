@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS builds (
     claimed_at   TEXT,
     message_id   INTEGER,
     thread_id    INTEGER,
+    channel_id   INTEGER,
     created_at   TEXT    NOT NULL,
     completed_at TEXT
 );
@@ -188,9 +189,16 @@ LATER_FEED_COLUMNS = (
     ("id_source", "TEXT"),
 )
 
+# A build's card used to be assumed to live in the configured requests channel.
+# /move can put it elsewhere, so where it actually is has to be recorded.
+LATER_BUILD_COLUMNS = (
+    ("channel_id", "INTEGER"),
+)
+
 LATER_COLUMNS = {
     "guild_config": LATER_CONFIG_COLUMNS,
     "youtube_feeds": LATER_FEED_COLUMNS,
+    "builds": LATER_BUILD_COLUMNS,
 }
 
 
@@ -273,11 +281,13 @@ def get_build(build_id: int) -> sqlite3.Row | None:
         return conn.execute("SELECT * FROM builds WHERE id = ?", (build_id,)).fetchone()
 
 
-def attach_message(build_id: int, message_id: int, thread_id: int | None) -> None:
+def attach_message(
+    build_id: int, message_id: int, thread_id: int | None, channel_id: int | None = None
+) -> None:
     with connect() as conn:
         conn.execute(
-            "UPDATE builds SET message_id = ?, thread_id = ? WHERE id = ?",
-            (message_id, thread_id, build_id),
+            "UPDATE builds SET message_id = ?, thread_id = ?, channel_id = ? WHERE id = ?",
+            (message_id, thread_id, channel_id, build_id),
         )
 
 

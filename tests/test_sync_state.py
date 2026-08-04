@@ -319,3 +319,26 @@ def test_state_is_always_saved_even_if_the_bot_crashes():
     assert any(step.get("if") == "always()" for step in save_steps), (
         "a crash must still push whatever state was reached"
     )
+
+
+def _triggers(workflow) -> dict:
+    """YAML 1.1 parses a bare `on:` key as the boolean True, not the string "on"."""
+    return workflow.get("on") or workflow.get(True) or {}
+
+
+def test_the_schedule_fires_at_least_hourly():
+    """The cron is the only thing that starts a successor, so a long gap between
+    fires is a long gap in uptime whenever GitHub drops one."""
+    workflow = _workflow("bot.yml")
+    crons = [entry["cron"] for entry in _triggers(workflow)["schedule"]]
+    assert crons, "no schedule means the bot never restarts itself"
+
+    for cron in crons:
+        minute, hour, *_ = cron.split()
+        assert hour == "*", f"{cron} fires less often than hourly"
+        assert minute.isdigit(), f"{cron} should fire at a fixed minute"
+
+
+def test_manual_dispatch_is_still_possible():
+    """Needed to deploy a fix without waiting for the next scheduled fire."""
+    assert "workflow_dispatch" in _triggers(_workflow("bot.yml"))

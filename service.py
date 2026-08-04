@@ -116,13 +116,22 @@ def check_scripter(member: discord.Member) -> None:
 # --------------------------------------------------------------------------
 
 async def post_build_card(
-    bot: discord.Client, guild: discord.Guild, build_id: int
+    bot: discord.Client,
+    guild: discord.Guild,
+    build_id: int,
+    channel: discord.TextChannel | None = None,
 ) -> discord.Message | None:
-    """Post a new build's card in the requests channel and open its discussion thread."""
+    """Post a build's card and open its discussion thread.
+
+    Defaults to the configured requests channel; /move passes a different one.
+    """
     from views import build_view  # local import: views imports this module back
 
-    cfg = require_config(guild.id)
-    channel = guild.get_channel(cfg["requests_channel_id"]) if cfg["requests_channel_id"] else None
+    if channel is None:
+        cfg = require_config(guild.id)
+        channel = (
+            guild.get_channel(cfg["requests_channel_id"]) if cfg["requests_channel_id"] else None
+        )
     if not isinstance(channel, discord.TextChannel):
         raise config.ConfigError(
             "The requests channel is missing or isn't a text channel. Re-run `/setup`."
@@ -142,8 +151,26 @@ async def post_build_card(
         # Threads are a nice-to-have; the card still works without one.
         log.warning("could not create thread for build #%s", build_id, exc_info=True)
 
-    db.attach_message(build_id, message.id, thread_id)
+    db.attach_message(build_id, message.id, thread_id, channel.id)
     return message
+
+
+def card_channel(bot: discord.Client, build) -> discord.TextChannel | None:
+    """Where this build's card actually is.
+
+    Falls back to the configured requests channel for builds created before the
+    location was recorded.
+    """
+    if build["channel_id"]:
+        channel = bot.get_channel(build["channel_id"])
+        if isinstance(channel, discord.TextChannel):
+            return channel
+
+    cfg = db.get_config(build["guild_id"])
+    if cfg is None or not cfg["requests_channel_id"]:
+        return None
+    channel = bot.get_channel(cfg["requests_channel_id"])
+    return channel if isinstance(channel, discord.TextChannel) else None
 
 
 async def refresh_card(bot: discord.Client, build_id: int) -> None:
@@ -154,12 +181,8 @@ async def refresh_card(bot: discord.Client, build_id: int) -> None:
     if build is None or build["message_id"] is None:
         return
 
-    cfg = db.get_config(build["guild_id"])
-    if cfg is None or cfg["requests_channel_id"] is None:
-        return
-
-    channel = bot.get_channel(cfg["requests_channel_id"])
-    if not isinstance(channel, discord.TextChannel):
+    channel = card_channel(bot, build)
+    if channel is None:
         return
 
     try:
@@ -190,6 +213,105 @@ async def post_to_thread(bot: discord.Client, build_id: int, **send_kwargs) -> N
         await thread.send(**send_kwargs)
     except discord.HTTPException:
         log.warning("failed to post in thread for build #%s", build_id, exc_info=True)
+
+
+async def move_build_card(
+    bot: discord.Client, build_id: int, target: discord.TextChannel, actor: discord.abc.User
+) -> str:
+    """Relocate a build's card to another channel. Returns a summary for the caller.
+
+    Discord will not move a thread between channels, and deleting a card deletes
+    the thread hanging off it — so a naive move would silently take the whole
+    discussion with it. Instead a fresh card and thread go up in the target, and
+    the old card is only removed when its thread has nothing worth keeping.
+    """
+    build = db.get_build(build_id)
+    if build is None:
+        raise config.ConfigError(f"Build #{build_id} doesn't exist.")
+
+    guild = target.guild
+    old_channel = card_channel(bot, build)
+    if old_channel is not None and old_channel.id == target.id:
+        raise config.ConfigError(f"Build #{build_id} is already in {target.mention}.")
+
+    perms = target.permissions_for(guild.me)
+    missing = [
+        label
+        for name, label in (
+            ("send_messages", "Send Messages"),
+            ("embed_links", "Embed Links"),
+            ("create_public_threads", "Create Public Threads"),
+        )
+        if not getattr(perms, name)
+    ]
+    if missing:
+        raise config.ConfigError(
+            f"I can't post in {target.mention} — I need {', '.join(missing)}."
+        )
+
+    old_message_id = build["message_id"]
+    old_thread_id = build["thread_id"]
+
+    new_message = await post_build_card(bot, guild, build_id, channel=target)
+    if new_message is None:
+        raise config.ConfigError("Couldn't post the card in the new channel.")
+
+    # Decide the old thread's fate before touching the old card, since deleting
+    # the card takes the thread with it.
+    kept_old = False
+    old_thread = bot.get_channel(old_thread_id) if old_thread_id else None
+    has_discussion = (
+        isinstance(old_thread, discord.Thread) and (old_thread.message_count or 0) > 0
+    )
+
+    if has_discussion:
+        kept_old = True
+        try:
+            if old_thread.archived:
+                await old_thread.edit(archived=False)
+            await old_thread.send(
+                f"➡️ This build moved to {new_message.jump_url} "
+                f"(moved by {actor.mention}). Carry on over there."
+            )
+            await old_thread.edit(archived=True, locked=True)
+        except discord.HTTPException:
+            log.warning("could not annotate old thread for #%s", build_id, exc_info=True)
+
+        # Leave the old card as a signpost rather than deleting it, because
+        # deleting it would delete the discussion above.
+        if old_channel is not None and old_message_id:
+            try:
+                message = await old_channel.fetch_message(old_message_id)
+                await message.edit(
+                    embed=embeds.notice(
+                        f"➡️ **Build #{build_id} moved to {target.mention}**\n"
+                        f"{new_message.jump_url}\n\n"
+                        f"*This is left here so the discussion above isn't lost.*"
+                    ),
+                    view=None,
+                )
+            except discord.HTTPException:
+                log.warning("could not rewrite old card for #%s", build_id, exc_info=True)
+    elif old_channel is not None and old_message_id:
+        try:
+            message = await old_channel.fetch_message(old_message_id)
+            await message.delete()
+        except discord.NotFound:
+            pass
+        except discord.HTTPException:
+            log.warning("could not delete old card for #%s", build_id, exc_info=True)
+
+    schedule_board_refresh(bot, guild)
+
+    where = f"from {old_channel.mention} " if old_channel else ""
+    summary = f"Moved build **#{build_id}** {where}to {target.mention}.\n{new_message.jump_url}"
+    if kept_old:
+        summary += (
+            "\n\nThe old card was kept as a signpost — it had discussion in its thread, "
+            "and Discord deletes a thread when its card is deleted. The old thread is "
+            "locked and points here."
+        )
+    return summary
 
 
 async def delete_build_everywhere(bot: discord.Client, build_id: int) -> None:

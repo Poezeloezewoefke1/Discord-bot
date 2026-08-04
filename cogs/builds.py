@@ -280,6 +280,41 @@ class BuildsCog(commands.Cog):
             ephemeral=True,
         )
 
+    @app_commands.command(name="move", description="Move a build's card to another channel")
+    @app_commands.describe(build="Which build to move", channel="Where to move it to")
+    @app_commands.autocomplete(build=deletable_build_autocomplete)
+    @app_commands.guild_only()
+    async def move(
+        self, interaction: discord.Interaction, build: int, channel: discord.TextChannel
+    ) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        row = db.get_build(build)
+        if row is None or row["guild_id"] != interaction.guild.id:
+            await interaction.followup.send(
+                embed=embeds.error(f"Build #{build} doesn't exist."), ephemeral=True
+            )
+            return
+
+        # Same rule as deleting: whoever asked for it, or an admin.
+        try:
+            service.check_can_delete(interaction.user, row)
+        except config.ConfigError as exc:
+            await interaction.followup.send(
+                embed=embeds.error(str(exc).replace("delete", "move")), ephemeral=True
+            )
+            return
+
+        try:
+            summary = await service.move_build_card(
+                self.bot, build, channel, interaction.user
+            )
+        except config.ConfigError as exc:
+            await interaction.followup.send(embed=embeds.error(str(exc)), ephemeral=True)
+            return
+
+        await interaction.followup.send(embed=embeds.success(summary), ephemeral=True)
+
     # ----------------------------------------------------------------------
     # looking things up
     # ----------------------------------------------------------------------

@@ -12,11 +12,16 @@
 name: Run bot
 
 on:
-  # Every 2 hours. This does not restart the bot — the concurrency group below
-  # makes each fire wait its turn. Firing often just keeps a successor parked and
-  # ready, so a skipped schedule costs at most 2 hours instead of a whole shift.
+  # Hourly. This does not restart the bot — the concurrency group below makes each
+  # fire wait its turn, so all a fire does is keep a successor parked and ready to
+  # take over the instant the current shift ends.
+  #
+  # Firing often is the redundancy: GitHub can drop a scheduled run under load, and
+  # hourly means that costs at most an hour of downtime rather than two. The price
+  # is a steady trickle of cancelled runs in the Actions tab — each one is a
+  # superseded pending run, which is normal and not a failure.
   schedule:
-    - cron: '0 */2 * * *'
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 # At most one bot alive at a time. A run triggered while another is in progress

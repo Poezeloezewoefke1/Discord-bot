@@ -120,11 +120,14 @@ That's it. It re-launches itself from then on.
 Actions kills any job at 6 hours, so the bot runs in shifts:
 
 - Each run hosts the bot for **5h30m**, then shuts down gracefully.
-- The workflow is scheduled every 2 hours, but those fires **don't start a second bot** — a
+- The workflow is scheduled **hourly**, but those fires **don't start a second bot** — a
   concurrency group makes each one wait its turn. That means a successor is nearly always parked
   and ready, so when a shift ends the next starts **within seconds**.
-- Firing every 2 hours is the redundancy: if GitHub skips a scheduled run under load, another is
-  along shortly rather than the bot being down for a whole shift.
+- Firing hourly is the redundancy: if GitHub skips a scheduled run under load, another is along
+  within the hour rather than the bot being down for a whole shift.
+
+This is what makes it 24/7 — no button-pressing. You can confirm it's self-sustaining by looking for
+runs in the Actions tab whose trigger is **schedule** rather than *workflow_dispatch*.
 
 **Cancelled runs in the Actions tab are normal.** Each new scheduled fire replaces the previous
 waiting one, and the replaced run shows as cancelled. Only a failed **Run the bot** step means
@@ -159,6 +162,7 @@ To back up or reset everything, that one branch is all your data.
 | `/update <build> <status> [file] [note]` | The builder holding it | Posts progress, with a schematic |
 | `/release <build>` | The builder holding it | Gives it back without uploading |
 | `/delete <build>` | Whoever requested it, or admins | Deletes it for good, after a confirmation |
+| `/move <build> <channel>` | Whoever requested it, or admins | Moves the build's card to another channel |
 | `/builds [status]` | Anyone | Lists builds and who's on them |
 | `/build <build>` | Anyone | Full detail on one build, including its handoff history |
 | `/schematic <build>` | Anyone | Downloads the latest schematic |
@@ -479,6 +483,12 @@ two are all your data.
 
 **Admins bypass every role check**, so you can't lock yourself out, and admins can force-release a
 build if a builder goes inactive.
+
+**Moving a build** with `/move` posts its card and a fresh thread in the new channel and updates the
+board. Discord won't relocate a thread between channels, and deleting a card deletes the thread
+hanging off it — so if the old thread has discussion in it, the old card is left behind as a
+signpost pointing at the new one rather than taking the conversation with it. If the thread was
+empty, the old card is simply removed.
 
 **Deleting is permanent.** `/delete` removes the request, its thread, its whole history and every
 schematic uploaded to it — the confirmation tells you exactly how many files that is before you
