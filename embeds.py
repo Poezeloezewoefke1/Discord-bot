@@ -310,6 +310,57 @@ def goodbye_card(member: discord.abc.User, guild: discord.Guild) -> discord.Embe
     return embed
 
 
+# --------------------------------------------------------------------------
+# security alerts
+# --------------------------------------------------------------------------
+
+def security_alert(
+    decision,
+    subject: discord.abc.User | None,
+    guild: discord.Guild,
+    outcome: str,
+) -> discord.Embed:
+    """One alert per trip. Says what happened, to whom, and what was done."""
+    import security  # local: embeds is imported by security's caller, not by it
+
+    watching = decision.watch_only
+    title = "🔍 Watch mode — no action taken" if watching else "🛡️ Protection triggered"
+
+    embed = discord.Embed(
+        title=title,
+        description=f"**{decision.label}**\n{decision.detail}",
+        color=config.COLOR_ALERT if watching else config.COLOR_ERROR,
+        timestamp=discord.utils.utcnow(),
+    )
+
+    if subject is not None:
+        embed.add_field(
+            name="Member",
+            value=f"{subject.mention}\n`{subject}` · `{subject.id}`",
+            inline=True,
+        )
+        age = security.account_age_days(getattr(subject, "created_at", None))
+        if age is not None:
+            embed.add_field(
+                name="Account age",
+                value=f"{int(age)} days" if age >= 1 else f"{int(age * 24)} hours",
+                inline=True,
+            )
+        embed.set_thumbnail(url=subject.display_avatar.url)
+
+    if watching:
+        embed.add_field(
+            name="Would have done",
+            value=f"**{decision.intended}**\nNothing was actually done.",
+            inline=False,
+        )
+        embed.set_footer(text="Turn this on for real with /security-mode live")
+    else:
+        embed.add_field(name="Action taken", value=outcome, inline=False)
+
+    return embed
+
+
 def error(message: str) -> discord.Embed:
     return discord.Embed(description=f"❌ {message}", color=config.COLOR_ERROR)
 

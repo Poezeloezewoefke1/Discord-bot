@@ -160,6 +160,58 @@ class HealthCog(commands.Cog):
             else:
                 welcome.append(f"{INFO} Auto-role: *none*")
 
+        # --- protection -------------------------------------------------
+        protection = []
+        if cfg is None or not cfg["security_log_channel_id"]:
+            protection.append(f"{INFO} Off — set up with `/security-setup`")
+        else:
+            from cogs.security import watch_only
+
+            line, ok = self._channel_check(
+                guild, cfg["security_log_channel_id"], "Alert channel",
+                ("send_messages", "embed_links"),
+            )
+            protection.append(line)
+            problems += not ok
+
+            if watch_only(cfg):
+                protection.append(f"{INFO} 🔍 **Watch mode** — reports only, takes no action")
+            else:
+                protection.append(f"{OK} 🛡️ Live — action on trip: **{cfg['security_action']}**")
+                if not guild.me.guild_permissions.ban_members:
+                    protection.append(f"{BAD} I lack **Ban Members**, so I can't enforce it")
+                    problems += 1
+
+            if cfg["honeypot_channel_id"]:
+                line, ok = self._channel_check(
+                    guild, cfg["honeypot_channel_id"], "Honeypot",
+                    ("read_messages",),
+                )
+                protection.append(line)
+                problems += not ok
+            else:
+                protection.append(f"{INFO} Honeypot: *none*")
+
+            if cfg["min_account_age_days"]:
+                protection.append(f"{OK} New accounts: under {cfg['min_account_age_days']} days")
+            if cfg["raid_join_count"]:
+                protection.append(
+                    f"{OK} Raid: {cfg['raid_join_count']} joins "
+                    f"in {cfg['raid_window_seconds']}s"
+                )
+
+            if cfg["scam_scanning"]:
+                if self.bot.intents.message_content:
+                    protection.append(f"{OK} Scam links: on")
+                else:
+                    protection.append(
+                        f"{BAD} Scam links: on, but the Message Content intent is off "
+                        f"— it isn't actually scanning"
+                    )
+                    problems += 1
+            else:
+                protection.append(f"{INFO} Scam links: off")
+
         # --- data -------------------------------------------------------
         try:
             counts = {
@@ -187,6 +239,7 @@ class HealthCog(commands.Cog):
         embed.add_field(name="Connection", value="\n".join(connection), inline=False)
         embed.add_field(name="Build board", value="\n".join(board)[:1024], inline=False)
         embed.add_field(name="Welcome messages", value="\n".join(welcome)[:1024], inline=False)
+        embed.add_field(name="Protection", value="\n".join(protection)[:1024], inline=False)
         embed.add_field(name="Data", value="\n".join(data)[:1024], inline=False)
         embed.set_footer(text="Only you can see this")
 

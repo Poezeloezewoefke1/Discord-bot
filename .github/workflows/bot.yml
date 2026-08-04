@@ -44,6 +44,11 @@ jobs:
       # Must match the `timeout ... 330m` below — /test uses it to say how long
       # is left in this shift. A test asserts the two stay equal.
       SHIFT_MINUTES: 330
+      # Scam-link scanning only. Leave at 0 until the Message Content intent is
+      # enabled in the Discord Developer Portal — asking for it before then stops
+      # the bot booting, and this workflow would restart it into the same crash.
+      # Portal first, then set this to 1.
+      ENABLE_MESSAGE_CONTENT: 0
 
     steps:
       - uses: actions/checkout@v4

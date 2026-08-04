@@ -140,7 +140,106 @@ class SchematicButton(
         await _guard(interaction, service.send_latest_schematic(interaction, self.build_id))
 
 
-DYNAMIC_ITEMS = (ClaimButton, UpdateButton, ReleaseButton, SchematicButton)
+class SecurityBanButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"sec:ban:(?P<user_id>\d+)",
+):
+    """Acts on a watch-mode alert. Persistent, because a mod may see the alert
+    hours later — and on this host the bot has restarted by then."""
+
+    def __init__(self, user_id: int) -> None:
+        self.user_id = user_id
+        super().__init__(
+            discord.ui.Button(
+                label="Ban them",
+                emoji="🔨",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"sec:ban:{user_id}",
+            )
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match: re.Match[str], /):
+        return cls(int(match["user_id"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not config.is_admin(interaction.user):
+            await interaction.response.send_message(
+                embed=embeds.error("Only staff can act on security alerts."), ephemeral=True
+            )
+            return
+
+        try:
+            await interaction.guild.ban(
+                discord.Object(id=self.user_id),
+                reason=f"Security alert, banned by {interaction.user}",
+                delete_message_seconds=86400,
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                embed=embeds.error(
+                    "I don't have permission to ban them — I need **Ban Members**, "
+                    "and my role must sit above theirs."
+                ),
+                ephemeral=True,
+            )
+            return
+        except discord.HTTPException as exc:
+            await interaction.response.send_message(
+                embed=embeds.error(f"Ban failed: `{exc}`"), ephemeral=True
+            )
+            return
+
+        await interaction.response.edit_message(
+            content=f"🔨 Banned <@{self.user_id}> — {interaction.user.mention} confirmed.",
+            view=None,
+        )
+
+
+class SecurityIgnoreButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"sec:ignore:(?P<user_id>\d+)",
+):
+    def __init__(self, user_id: int) -> None:
+        self.user_id = user_id
+        super().__init__(
+            discord.ui.Button(
+                label="Ignore",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"sec:ignore:{user_id}",
+            )
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match: re.Match[str], /):
+        return cls(int(match["user_id"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not config.is_admin(interaction.user):
+            await interaction.response.send_message(
+                embed=embeds.error("Only staff can act on security alerts."), ephemeral=True
+            )
+            return
+        await interaction.response.edit_message(
+            content=f"✅ Marked as a false alarm by {interaction.user.mention}.", view=None
+        )
+
+
+def security_alert_view(user_id: int) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(SecurityBanButton(user_id))
+    view.add_item(SecurityIgnoreButton(user_id))
+    return view
+
+
+DYNAMIC_ITEMS = (
+    ClaimButton,
+    UpdateButton,
+    ReleaseButton,
+    SchematicButton,
+    SecurityBanButton,
+    SecurityIgnoreButton,
+)
 
 
 def build_view(build: sqlite3.Row) -> discord.ui.View:

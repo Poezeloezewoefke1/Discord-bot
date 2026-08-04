@@ -95,7 +95,7 @@ def test_existing_database_gains_the_new_columns(tmp_path):
     db.init_db()
 
     cfg = db.get_config(GUILD)
-    for column in db.LATER_CONFIG_COLUMNS:
+    for column in db.LATER_CONFIG_NAMES:
         assert column in cfg.keys(), f"{column} was not added to an existing database"
         assert cfg[column] is None
 

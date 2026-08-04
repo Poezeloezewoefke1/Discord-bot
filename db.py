@@ -32,7 +32,15 @@ CREATE TABLE IF NOT EXISTS guild_config (
     welcome_channel_id     INTEGER,
     applications_channel_id INTEGER,
     auto_role_id           INTEGER,
-    goodbye_channel_id     INTEGER
+    goodbye_channel_id     INTEGER,
+    security_log_channel_id INTEGER,
+    honeypot_channel_id    INTEGER,
+    security_watch_only    INTEGER,
+    security_action        TEXT,
+    min_account_age_days   INTEGER,
+    raid_join_count        INTEGER,
+    raid_window_seconds    INTEGER,
+    scam_scanning          INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS builds (
@@ -100,24 +108,37 @@ def connect() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-# Columns added to guild_config after the first release. CREATE TABLE IF NOT EXISTS
-# does nothing to a table that already exists, so a database created before these
-# were added needs them bolted on, or every query fails with "no such column".
+# Columns added to guild_config after the first release, as (name, type) pairs.
+# CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a
+# database created before these were added needs them bolted on, or every query
+# fails with "no such column".
 LATER_CONFIG_COLUMNS = (
-    "welcome_channel_id",
-    "applications_channel_id",
-    "auto_role_id",
-    "goodbye_channel_id",
+    # welcome / goodbye
+    ("welcome_channel_id", "INTEGER"),
+    ("applications_channel_id", "INTEGER"),
+    ("auto_role_id", "INTEGER"),
+    ("goodbye_channel_id", "INTEGER"),
+    # anti-raid / anti-spam
+    ("security_log_channel_id", "INTEGER"),
+    ("honeypot_channel_id", "INTEGER"),
+    ("security_watch_only", "INTEGER"),
+    ("security_action", "TEXT"),
+    ("min_account_age_days", "INTEGER"),
+    ("raid_join_count", "INTEGER"),
+    ("raid_window_seconds", "INTEGER"),
+    ("scam_scanning", "INTEGER"),
 )
+
+LATER_CONFIG_NAMES = tuple(name for name, _ in LATER_CONFIG_COLUMNS)
 
 
 def _add_missing_columns(conn: sqlite3.Connection) -> list[str]:
     """Bring an older guild_config up to date. Safe to run on every start."""
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(guild_config)")}
     added = []
-    for column in LATER_CONFIG_COLUMNS:
+    for column, decl in LATER_CONFIG_COLUMNS:
         if column not in existing:
-            conn.execute(f"ALTER TABLE guild_config ADD COLUMN {column} INTEGER")
+            conn.execute(f"ALTER TABLE guild_config ADD COLUMN {column} {decl}")
             added.append(column)
     return added
 
@@ -150,7 +171,7 @@ def save_config(guild_id: int, **fields) -> None:
         "requests_channel_id",
         "board_channel_id",
         "board_message_id",
-        *LATER_CONFIG_COLUMNS,
+        *LATER_CONFIG_NAMES,
     }
     unknown = set(fields) - allowed
     if unknown:

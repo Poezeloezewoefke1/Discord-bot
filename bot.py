@@ -25,7 +25,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("buildboard")
 
-COGS = ("cogs.setup", "cogs.builds", "cogs.welcome", "cogs.health")
+COGS = ("cogs.setup", "cogs.builds", "cogs.welcome", "cogs.health", "cogs.security")
 
 
 class BuildBoardBot(commands.Bot):
@@ -34,6 +34,9 @@ class BuildBoardBot(commands.Bot):
         # Needed to list who holds the builder role for the board's "free builders"
         # section. This is a privileged intent — enable it in the Developer Portal.
         intents.members = True
+        # Only requested when explicitly enabled — asking for a privileged intent
+        # the Portal hasn't granted stops the bot starting at all.
+        intents.message_content = config.MESSAGE_CONTENT
         super().__init__(command_prefix="!", intents=intents, help_command=None)
         # When this process started — /test reports it, which matters on a host
         # that restarts the bot on a schedule.
@@ -130,10 +133,20 @@ async def main() -> None:
     except discord.LoginFailure:
         sys.exit("Discord rejected that token. Check DISCORD_TOKEN in your .env.")
     except discord.PrivilegedIntentsRequired:
+        needed = ["Server Members Intent"]
+        if config.MESSAGE_CONTENT:
+            needed.append("Message Content Intent")
         sys.exit(
-            "The Server Members intent is off.\n"
+            f"Discord refused a privileged intent: {' and '.join(needed)}.\n"
             "Turn it on at https://discord.com/developers/applications "
-            "-> your app -> Bot -> Privileged Gateway Intents -> Server Members Intent."
+            "-> your app -> Bot -> Privileged Gateway Intents.\n"
+            + (
+                "\nENABLE_MESSAGE_CONTENT is set, so the bot is asking for Message "
+                "Content. If you haven't enabled it in the Portal yet, either enable "
+                "it there or unset ENABLE_MESSAGE_CONTENT to get the bot back up."
+                if config.MESSAGE_CONTENT
+                else ""
+            )
         )
 
 

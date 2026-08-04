@@ -41,6 +41,15 @@ BOARD_REFRESH_INTERVAL = 5.0
 # timeout, and a test pins the two together so they can't drift apart.
 SHIFT_MINUTES = int(os.getenv("SHIFT_MINUTES") or 0)
 
+# Scam-link scanning needs Discord's privileged Message Content intent. Opt-in on
+# purpose: if the code asks for an intent the Developer Portal hasn't granted,
+# discord.py refuses to start — and a host that restarts on a schedule would then
+# restart into the same crash forever, taking the whole bot down. Enable it in the
+# Portal FIRST, then set this.
+MESSAGE_CONTENT = (os.getenv("ENABLE_MESSAGE_CONTENT") or "").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+
 # How far back the board's "recently finished" section looks.
 FINISHED_WINDOW_DAYS = 7
 
@@ -49,6 +58,7 @@ COLOR_CLAIMED = discord.Color.from_str("#5865f2")   # blurple — being built
 COLOR_DONE = discord.Color.from_str("#57f287")      # green — finished
 COLOR_ERROR = discord.Color.from_str("#ed4245")     # red — rejected action
 COLOR_GOODBYE = discord.Color.from_str("#e57373")   # soft red — someone left
+COLOR_ALERT = discord.Color.from_str("#faa61a")     # amber — security alert
 
 
 

@@ -170,6 +170,8 @@ To back up or reset everything, that one branch is all your data.
 | `/welcome-setup` | Admins | Sets up welcome messages, auto-role and goodbyes |
 | `/welcome-test` | Admins | Previews the welcome message on yourself |
 | `/welcome-off` | Admins | Turns welcomes, goodbyes and auto-role back off |
+| `/security-setup` | Admins | Sets up anti-raid and anti-spam protection |
+| `/security-mode` | Admins | Switches between watch-only and acting for real |
 
 Everything the bot says back to you is ephemeral — only you see it, so channels stay clean.
 Build numbers autocomplete as you type, and `/update` and `/release` list *your* builds first.
@@ -247,6 +249,72 @@ on every join, and `/welcome-test` re-checks in case roles get reordered later.
 
 If the role assignment fails at join time, the member still gets their welcome message — the two are
 deliberately independent.
+
+## Anti-raid and anti-spam protection
+
+Four protections, all of which start in **watch mode** — they report what they *would* have done
+and take no action until you say so.
+
+```
+/security-setup log_channel:#mod-log honeypot_channel:#⛔-do-not-post
+                min_account_age_days:7 raid_joins:10 raid_seconds:60
+```
+
+| Protection | What it catches |
+|---|---|
+| **Honeypot channel** | Spam bots blast every channel they can see. This one is labelled "posting here = ban", so only a bot walks in. The most effective of the four. |
+| **Anti-raid** | A burst of joins — 10 in 60 seconds by default — alerts staff instead of you finding out from the spam. |
+| **New-account gate** | Flags accounts created in the last 7 days. Raid accounts are nearly always fresh. |
+| **Scam links** | Fake Nitro/Steam domains. Needs an extra intent — see below. |
+
+`/security-setup` posts and pins the warning in the honeypot channel itself. Don't remove it: an
+unlabelled honeypot catches curious members instead of bots.
+
+### Watch mode
+
+Everything starts in watch mode and stays there until you run `/security-mode live`. Alerts look
+like this, with buttons so staff can act on one directly:
+
+```
+🔍 Watch mode — no action taken
+Posted in the honeypot channel
+Posted in #⛔-do-not-post, which nobody should ever post in.
+
+Member        @SomeUser · 847...291
+Account age   2 hours
+Would have done   ban  (nothing was actually done)
+
+[🔨 Ban them]  [Ignore]
+```
+
+Run it this way for a few days and read the log. If anything in the setup is wrong, you find out
+from a log line instead of from your members being banned.
+
+**Staff are never actioned** — the owner, and anyone with Administrator, Manage Server, Ban Members
+or Manage Messages, is skipped before any check runs. You cannot lock yourself out with this.
+
+### Turning on scam-link scanning
+
+This one needs Discord's **Message Content** intent, and the order matters:
+
+1. Developer Portal → your app → Bot → enable **Message Content Intent**
+2. *Then* set `ENABLE_MESSAGE_CONTENT: 1` in `.github/workflows/bot.yml`
+3. `/security-setup ... scam_scanning:True`
+
+**Do step 2 before step 1 and the bot won't start at all** — Discord refuses the connection, and the
+workflow would restart it into the same failure every couple of hours. That's why it ships off.
+
+Detection works by brand impersonation rather than a list of known-bad domains: a link that reads
+like `discord` but isn't one of Discord's real domains is the signal, and that keeps working when
+scammers register a new domain tomorrow. `discrod.gg` and `disc0rd-nitro.xyz` are caught;
+`discord.gift`, `discordjs.guide` and `nitrado.net` are not. If something legitimate does get
+flagged, add it to `ALLOWED_DOMAINS` in `security.py`.
+
+### What this isn't
+
+Honeypot and bots like it draw on a shared database of known raiders across thousands of servers.
+That's a network effect, not code, and it isn't reproduced here. This catches accounts that
+misbehave *on your server* — it doesn't know an account was banned elsewhere.
 
 ## Notes
 
