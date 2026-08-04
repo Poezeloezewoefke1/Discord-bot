@@ -1,0 +1,15 @@
+# secrets
+.env
+
+# uploaded schematics and the database are runtime data, not source
+schematics/
+*.db
+*.db-journal
+*.db-wal
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
