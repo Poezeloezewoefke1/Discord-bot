@@ -473,6 +473,22 @@ def ticket_log(ticket, actor: discord.abc.User, event: str) -> discord.Embed:
     return embed
 
 
+def upload_announcement(video, creator_name: str) -> discord.Embed:
+    """Posted when a watched channel uploads."""
+    embed = discord.Embed(
+        title=video.title[:256],
+        url=video.watch_url,
+        description=f"**{creator_name}** just uploaded.",
+        color=discord.Color.from_str("#ff0000"),  # YouTube red
+        timestamp=video.published or discord.utils.utcnow(),
+    )
+    embed.set_author(name=f"🔴 New video from {creator_name}"[:256])
+    if video.thumbnail:
+        embed.set_image(url=video.thumbnail)
+    embed.set_footer(text="YouTube")
+    return embed
+
+
 def error(message: str) -> discord.Embed:
     return discord.Embed(description=f"❌ {message}", color=config.COLOR_ERROR)
 

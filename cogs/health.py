@@ -249,6 +249,41 @@ class HealthCog(commands.Cog):
                     f"(Message Content intent is off)"
                 )
 
+        # --- upload notifications ---------------------------------------
+        uploads = []
+        if cfg is None or not cfg["notify_channel_id"]:
+            uploads.append(f"{INFO} Off — set up with `/notify-setup`")
+        else:
+            import notify as notify_lib
+
+            line, ok = self._channel_check(
+                guild, cfg["notify_channel_id"], "Announcements",
+                ("send_messages", "embed_links"),
+            )
+            uploads.append(line)
+            problems += not ok
+
+            channel = guild.get_channel(cfg["notify_channel_id"])
+            if channel is not None and not channel.permissions_for(guild.me).mention_everyone:
+                uploads.append(f"{WARN} No **Mention Everyone** — posts won't ping")
+
+            cog = self.bot.get_cog("NotifyCog")
+            if cog is None or not cog.poll.is_running():
+                uploads.append(f"{BAD} The upload check loop is **not running**")
+                problems += 1
+
+            for creator in notify_lib.CREATORS:
+                feed = db.get_feed(creator["handle"])
+                if feed is None or not feed["channel_id"]:
+                    uploads.append(f"{INFO} {creator['name']} — not resolved yet")
+                elif feed["last_error"]:
+                    uploads.append(f"{BAD} {creator['name']} — {feed['last_error']}")
+                    problems += 1
+                else:
+                    ts = db.to_unix(feed["last_checked"])
+                    when = f"<t:{ts}:R>" if ts else "never"
+                    uploads.append(f"{OK} {creator['name']} — checked {when}")
+
         # --- data -------------------------------------------------------
         try:
             counts = {
@@ -278,6 +313,7 @@ class HealthCog(commands.Cog):
         embed.add_field(name="Welcome messages", value="\n".join(welcome)[:1024], inline=False)
         embed.add_field(name="Protection", value="\n".join(protection)[:1024], inline=False)
         embed.add_field(name="Tickets", value="\n".join(ticketing)[:1024], inline=False)
+        embed.add_field(name="Upload alerts", value="\n".join(uploads)[:1024], inline=False)
         embed.add_field(name="Data", value="\n".join(data)[:1024], inline=False)
         embed.set_footer(text="Only you can see this")
 

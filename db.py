@@ -85,6 +85,24 @@ CREATE TABLE IF NOT EXISTS tickets (
     close_reason TEXT
 );
 
+CREATE TABLE IF NOT EXISTS youtube_feeds (
+    handle        TEXT PRIMARY KEY,
+    channel_id    TEXT,
+    title         TEXT,
+    last_video_id TEXT,
+    last_checked  TEXT,
+    last_error    TEXT,
+    initialised   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS announced_videos (
+    video_id     TEXT PRIMARY KEY,
+    handle       TEXT NOT NULL,
+    announced_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_announced_handle ON announced_videos (handle, announced_at);
+
 CREATE INDEX IF NOT EXISTS idx_tickets_guild_status ON tickets (guild_id, status);
 CREATE INDEX IF NOT EXISTS idx_tickets_channel ON tickets (channel_id);
 
@@ -152,6 +170,8 @@ LATER_CONFIG_COLUMNS = (
     ("ticket_log_channel_id", "INTEGER"),
     ("ticket_panel_channel_id", "INTEGER"),
     ("ticket_panel_message_id", "INTEGER"),
+    # upload notifications
+    ("notify_channel_id", "INTEGER"),
 )
 
 LATER_CONFIG_NAMES = tuple(name for name, _ in LATER_CONFIG_COLUMNS)
@@ -345,6 +365,99 @@ def busy_builder_ids(guild_id: int) -> set[int]:
             (guild_id, STATUS_CLAIMED),
         ).fetchall()
     return {int(row["claimed_by"]) for row in rows}
+
+
+# --------------------------------------------------------------------------
+# upload notifications
+# --------------------------------------------------------------------------
+
+# Enough history to never re-announce, without letting a table that gets
+# committed to a git branch every few minutes grow without bound.
+ANNOUNCED_KEEP_PER_HANDLE = 100
+
+
+def get_feed(handle: str) -> sqlite3.Row | None:
+    with connect() as conn:
+        return conn.execute(
+            "SELECT * FROM youtube_feeds WHERE handle = ?", (handle,)
+        ).fetchone()
+
+
+def list_feeds() -> list[sqlite3.Row]:
+    with connect() as conn:
+        return conn.execute("SELECT * FROM youtube_feeds ORDER BY handle").fetchall()
+
+
+def save_feed(handle: str, **fields) -> None:
+    allowed = {"channel_id", "title", "last_video_id", "last_checked", "last_error", "initialised"}
+    unknown = set(fields) - allowed
+    if unknown:
+        raise ValueError(f"unknown feed fields: {sorted(unknown)}")
+
+    with connect() as conn:
+        conn.execute("INSERT OR IGNORE INTO youtube_feeds (handle) VALUES (?)", (handle,))
+        if fields:
+            assignments = ", ".join(f"{name} = ?" for name in fields)
+            conn.execute(
+                f"UPDATE youtube_feeds SET {assignments} WHERE handle = ?",
+                (*fields.values(), handle),
+            )
+
+
+def was_announced(video_id: str) -> bool:
+    with connect() as conn:
+        return (
+            conn.execute(
+                "SELECT 1 FROM announced_videos WHERE video_id = ?", (video_id,)
+            ).fetchone()
+            is not None
+        )
+
+
+def mark_announced(video_id: str, handle: str) -> bool:
+    """Record a video as seen. False if it was already recorded.
+
+    The insert is the claim: two polls overlapping can't both announce, and a
+    restart mid-shift resumes rather than repeating.
+    """
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO announced_videos (video_id, handle, announced_at) "
+            "VALUES (?, ?, ?)",
+            (video_id, handle, now_iso()),
+        )
+        return cur.rowcount == 1
+
+
+def prune_announced(handle: str, keep: int = ANNOUNCED_KEEP_PER_HANDLE) -> int:
+    with connect() as conn:
+        cur = conn.execute(
+            """DELETE FROM announced_videos
+                WHERE handle = ? AND video_id NOT IN (
+                    SELECT video_id FROM announced_videos
+                     WHERE handle = ? ORDER BY announced_at DESC, rowid DESC LIMIT ?
+                )""",
+            (handle, handle, keep),
+        )
+        return cur.rowcount
+
+
+def count_announced(handle: str | None = None) -> int:
+    with connect() as conn:
+        if handle:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM announced_videos WHERE handle = ?", (handle,)
+            ).fetchone()
+        else:
+            row = conn.execute("SELECT COUNT(*) AS n FROM announced_videos").fetchone()
+    return int(row["n"])
+
+
+def guilds_with_notify_channel() -> list[sqlite3.Row]:
+    with connect() as conn:
+        return conn.execute(
+            "SELECT * FROM guild_config WHERE notify_channel_id IS NOT NULL"
+        ).fetchall()
 
 
 # --------------------------------------------------------------------------

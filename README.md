@@ -173,6 +173,9 @@ To back up or reset everything, that one branch is all your data.
 | `/security-setup` | Admins | Sets up anti-raid and anti-spam protection |
 | `/security-test` | Admins | Checks the protections are armed, and whether *you* are exempt |
 | `/security-mode` | Admins | Switches between watch-only and acting for real |
+| `/notify-setup` | Admins | Chooses where new YouTube uploads are announced |
+| `/notify-test` | Admins | Checks the upload watcher is alive and both feeds resolve |
+| `/notify-check` | Admins | Checks for new uploads right now |
 | `/ticket-setup` | Admins | Sets up the ticket system and posts the panel |
 | `/ticket-panel` | Admins | Posts the panel again if it gets deleted |
 | `/ticket-add` | Support | Adds someone to the ticket you're in |
@@ -254,6 +257,40 @@ on every join, and `/welcome-test` re-checks in case roles get reordered later.
 
 If the role assignment fails at join time, the member still gets their welcome message — the two are
 deliberately independent.
+
+## Upload announcements
+
+Announces new YouTube uploads with an `@everyone` ping.
+
+```
+/notify-setup channel:#announcements
+```
+
+The channels being watched are fixed in `CREATORS` at the top of `notify.py`:
+
+- [@Pyro_Blits](https://www.youtube.com/@Pyro_Blits)
+- [@Microman_J](https://www.youtube.com/@Microman_J)
+
+It uses YouTube's public per-channel Atom feed — no API key, no scraping, nothing to expire. The
+`@handle` is resolved to the underlying `UC…` channel id once and cached, so renaming a channel
+doesn't need a code change. Checked every 5 minutes.
+
+**Existing videos are never announced.** The first check for a channel records the whole backlog as
+seen and posts nothing — otherwise setup would fire fifteen `@everyone` pings at once. Seen videos
+are stored in the database, so the ~6-hourly restart resumes rather than re-announcing everything.
+
+`@everyone` needs the **Mention Everyone** permission in that channel. `/notify-setup` warns if it's
+missing, because without it the announcement still posts and simply pings nobody — which looks like
+it worked.
+
+`/notify-test` shows whether the loop is running, whether each handle resolved, and when each feed
+was last checked successfully. Worth a look if uploads stop appearing.
+
+### Why there's no TikTok
+
+TikTok has no public feed or API, and actively blocks scraping. Anything built against it would work
+for a while and then quietly stop — which is worse than not having it, because you'd stop checking.
+Post those manually.
 
 ## Support tickets
 

@@ -32,6 +32,7 @@ COGS = (
     "cogs.health",
     "cogs.security",
     "cogs.tickets",
+    "cogs.notify",
 )
 
 
