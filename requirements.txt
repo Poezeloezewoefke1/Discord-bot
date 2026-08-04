@@ -3,3 +3,4 @@ python-dotenv>=1.0.0
 
 # dev only
 pytest>=8.0.0
+PyYAML>=6.0          # used by the tests that check the workflow files

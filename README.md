@@ -86,6 +86,69 @@ what's missing if not.
 Use a dedicated, otherwise-empty channel for the board. The bot keeps one message there and edits
 it in place.
 
+## Hosting it 24/7 on GitHub Actions
+
+The bot can host itself out of this repo — no server of your own. **Read the two trade-offs below
+before you set this up**, because neither is reversible after the fact.
+
+### What you're accepting
+
+**Your build data becomes public.** State lives in a branch called `bot-data`: the database (build
+descriptions, Discord user IDs) and every schematic anyone uploads. This repo is public, so anyone
+can browse and download all of it. If that's not okay, make the repo private — Actions then bills
+against your 2,000 free minutes/month, which 24/7 running will exhaust in about three days.
+
+**GitHub's acceptable-use rules don't cover running a service on Actions.** Actions is for building
+and testing code, and repos have been flagged for using it as free hosting. Nothing here hides the
+usage. If that risk isn't acceptable, run the bot on the machine that already runs your Minecraft
+server instead — the "Run it" steps above are all it takes, and no code changes are needed.
+
+### Setting it up
+
+1. **Settings → Secrets and variables → Actions → New repository secret**, twice:
+   - `DISCORD_TOKEN` — your bot token
+   - `GUILD_ID` — your server ID
+
+   Never put the token in a file in this repo. It would be public within seconds of pushing.
+2. **Actions** tab → **Run bot** → **Run workflow**.
+
+That's it. It re-launches itself from then on.
+
+### How it stays up
+
+Actions kills any job at 6 hours, so the bot runs in shifts:
+
+- Each run hosts the bot for **5h30m**, then shuts down gracefully.
+- The workflow is scheduled every 2 hours, but those fires **don't start a second bot** — a
+  concurrency group makes each one wait its turn. That means a successor is nearly always parked
+  and ready, so when a shift ends the next starts **within seconds**.
+- Firing every 2 hours is the redundancy: if GitHub skips a scheduled run under load, another is
+  along shortly rather than the bot being down for a whole shift.
+
+**Cancelled runs in the Actions tab are normal.** Each new scheduled fire replaces the previous
+waiting one, and the replaced run shows as cancelled. Only a failed **Run the bot** step means
+something is actually wrong.
+
+Expect a few seconds' gap at each handover, and rarely up to ~2 hours if GitHub drops a schedule.
+During a gap, commands fail with Discord's "application did not respond".
+
+### How your data survives restarts
+
+Every runner starts with a blank disk, so `hosting/sync_state.py` copies the database and schematics
+to the `bot-data` branch every 5 minutes and once more at shutdown. The next run restores them
+before the bot starts. Worst case — a hard crash — loses the last 5 minutes of activity.
+
+The database is copied with SQLite's backup API rather than a plain file copy, because the bot is
+writing to it at the same time and a naive copy can produce a file that won't open. The branch is
+rewritten as a single commit each time; keeping history would mean re-storing the whole database
+every few minutes forever.
+
+To back up or reset everything, that one branch is all your data.
+
+> GitHub disables scheduled workflows after **60 days without repository activity**. The state
+> commits should keep that timer alive, but if the bot ever goes quiet for a long stretch, check the
+> Actions tab for a "this workflow was disabled" banner and click Enable.
+
 ## Commands
 
 | Command | Who | What it does |
@@ -126,8 +189,11 @@ pip install -r requirements.txt
 python -m pytest tests/ -q
 ```
 
-The tests cover the whole claim/handoff state machine with no Discord connection needed — including
-a 20-thread race on one build to prove exactly one claim can win.
+The tests need no Discord connection. They cover the whole claim/handoff state machine — including
+a 20-thread race on one build to prove exactly one claim can win — and the state round trip, using
+a real git repo in a temp directory to prove a restart doesn't lose claims or schematics.
+
+They also run automatically on every push and pull request via `.github/workflows/tests.yml`.
 
 | File | What's in it |
 |---|---|
@@ -139,3 +205,9 @@ a 20-thread race on one build to prove exactly one claim can win.
 | `views.py` | Buttons and the request form |
 | `cogs/setup.py` | `/setup`, `/setup-show`, `/board-refresh` |
 | `cogs/builds.py` | The build workflow commands |
+| `hosting/sync_state.py` | Saves/restores state to the `bot-data` branch (GitHub hosting only) |
+| `.github/workflows/` | `bot.yml` runs the bot, `tests.yml` runs the tests |
+
+The bot itself knows nothing about GitHub — it just reads `DB_PATH` and `SCHEMATIC_DIR` from the
+environment. All the hosting-specific logic sits in `hosting/`, so moving to a normal server later
+means deleting a workflow file, not rewriting the bot.

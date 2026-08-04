@@ -15,6 +15,7 @@ from discord.ext import commands
 import config
 import db
 import embeds
+import service
 from views import DYNAMIC_ITEMS
 
 logging.basicConfig(
@@ -62,9 +63,18 @@ class BuildBoardBot(commands.Bot):
 
     async def on_ready(self) -> None:
         log.info("logged in as %s (%s)", self.user, self.user.id)
+
+        # Redraw every board on connect. Hosts that restart the bot on a schedule
+        # would otherwise leave a stale board up until the next claim or update.
         for guild in self.guilds:
             if db.get_config(guild.id) is None:
                 log.warning("guild %s (%s) has not run /setup yet", guild.name, guild.id)
+                continue
+            try:
+                await service.refresh_board_now(self, guild)
+            except Exception:
+                log.exception("could not refresh board for guild %s", guild.id)
+
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching, name="the build board"

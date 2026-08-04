@@ -1,0 +1,107 @@
+# Runs the Discord bot on GitHub Actions.
+#
+# Actions kills any job at 6 hours and wipes the disk between runs, so this
+# workflow works in shifts: each run hosts the bot for 5h30m while syncing its
+# database and schematics to the `bot-data` branch, and the next run is already
+# queued to take over the moment this one ends.
+#
+# Cancelled runs in the Actions tab are NORMAL. Each scheduled fire that arrives
+# while the bot is running becomes the pending successor and cancels the previous
+# pending one. Only failures of the "Run the bot" step mean something is wrong.
+
+name: Run bot
+
+on:
+  # Every 2 hours. This does not restart the bot — the concurrency group below
+  # makes each fire wait its turn. Firing often just keeps a successor parked and
+  # ready, so a skipped schedule costs at most 2 hours instead of a whole shift.
+  schedule:
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+
+# At most one bot alive at a time. A run triggered while another is in progress
+# goes pending and waits, rather than starting a second bot that would answer
+# every command twice.
+concurrency:
+  group: discord-bot
+  cancel-in-progress: false
+
+permissions:
+  contents: write        # to push the bot-data branch
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    # GitHub's hard kill is 360. Staying under it keeps the "Save state" step
+    # below reachable — see the timing ladder in the "Run the bot" step.
+    timeout-minutes: 350
+
+    env:
+      DB_PATH: ${{ github.workspace }}/buildboard.db
+      SCHEMATIC_DIR: ${{ github.workspace }}/schematics
+      STATE_BRANCH: bot-data
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore saved state
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python hosting/sync_state.py restore
+
+      - name: Run the bot
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          GUILD_ID: ${{ secrets.GUILD_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          FLAG="$RUNNER_TEMP/keep-saving"
+          touch "$FLAG"
+
+          # Save every ~5 minutes while the bot runs, but notice the flag going
+          # away within 5 seconds so shutdown isn't held up by a long sleep.
+          (
+            while [ -f "$FLAG" ]; do
+              for _ in $(seq 60); do
+                [ -f "$FLAG" ] || exit 0
+                sleep 5
+              done
+              python hosting/sync_state.py save || true
+            done
+          ) &
+          SAVER=$!
+
+          # Timing ladder, each step leaving room for the next:
+          #   330m  bot gets SIGINT (bot.py exits cleanly on KeyboardInterrupt)
+          #   331m  SIGKILL if it ignored that
+          #   350m  job timeout
+          #   360m  GitHub's hard kill
+          # The ~20m tail is the budget for the final state push.
+          timeout --signal=INT --kill-after=60s 330m python -u bot.py
+          CODE=$?
+
+          rm -f "$FLAG"
+          wait "$SAVER" 2>/dev/null || true
+
+          # 124 is `timeout` reporting it ended the shift — the expected outcome.
+          if [ "$CODE" -eq 124 ]; then
+            echo "Shift finished after 5h30m; the queued run takes over now."
+            exit 0
+          fi
+          exit "$CODE"
+
+      - name: Save state
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python hosting/sync_state.py save

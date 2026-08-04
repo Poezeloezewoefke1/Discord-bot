@@ -7,6 +7,9 @@ schematics/
 *.db-journal
 *.db-wal
 
+# scratch checkout used by hosting/sync_state.py
+.state/
+
 # python
 __pycache__/
 *.py[cod]
