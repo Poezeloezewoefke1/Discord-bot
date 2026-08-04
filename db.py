@@ -23,12 +23,16 @@ KIND_COMPLETE = "complete"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS guild_config (
-    guild_id            INTEGER PRIMARY KEY,
-    builder_role_id     INTEGER,
-    scripter_role_id    INTEGER,
-    requests_channel_id INTEGER,
-    board_channel_id    INTEGER,
-    board_message_id    INTEGER
+    guild_id               INTEGER PRIMARY KEY,
+    builder_role_id        INTEGER,
+    scripter_role_id       INTEGER,
+    requests_channel_id    INTEGER,
+    board_channel_id       INTEGER,
+    board_message_id       INTEGER,
+    welcome_channel_id     INTEGER,
+    applications_channel_id INTEGER,
+    auto_role_id           INTEGER,
+    goodbye_channel_id     INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS builds (
@@ -96,10 +100,35 @@ def connect() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+# Columns added to guild_config after the first release. CREATE TABLE IF NOT EXISTS
+# does nothing to a table that already exists, so a database created before these
+# were added needs them bolted on, or every query fails with "no such column".
+LATER_CONFIG_COLUMNS = (
+    "welcome_channel_id",
+    "applications_channel_id",
+    "auto_role_id",
+    "goodbye_channel_id",
+)
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> list[str]:
+    """Bring an older guild_config up to date. Safe to run on every start."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(guild_config)")}
+    added = []
+    for column in LATER_CONFIG_COLUMNS:
+        if column not in existing:
+            conn.execute(f"ALTER TABLE guild_config ADD COLUMN {column} INTEGER")
+            added.append(column)
+    return added
+
+
 def init_db() -> None:
     _db_path.parent.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(SCHEMA)
+        added = _add_missing_columns(conn)
+    if added:
+        print(f"[db] migrated guild_config, added: {', '.join(added)}", flush=True)
 
 
 # --------------------------------------------------------------------------
@@ -121,6 +150,7 @@ def save_config(guild_id: int, **fields) -> None:
         "requests_channel_id",
         "board_channel_id",
         "board_message_id",
+        *LATER_CONFIG_COLUMNS,
     }
     unknown = set(fields) - allowed
     if unknown:

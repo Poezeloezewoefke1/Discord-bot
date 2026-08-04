@@ -113,6 +113,17 @@ class SetupCog(commands.Cog):
             name="📋 Board channel", value=channel(cfg["board_channel_id"]), inline=False
         )
 
+        embed.add_field(
+            name="👋 Welcome messages",
+            value=(
+                f"Channel: {channel(cfg['welcome_channel_id'])}\n"
+                f"Points to: {channel(cfg['applications_channel_id'])}\n"
+                f"Auto-role: {role(cfg['auto_role_id'])}\n"
+                f"Goodbyes: {channel(cfg['goodbye_channel_id'])}"
+            ),
+            inline=False,
+        )
+
         counts = {
             status: len(db.list_builds(interaction.guild.id, status))
             for status in (db.STATUS_OPEN, db.STATUS_CLAIMED, db.STATUS_COMPLETE)

@@ -25,7 +25,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("buildboard")
 
-COGS = ("cogs.setup", "cogs.builds")
+COGS = ("cogs.setup", "cogs.builds", "cogs.welcome")
 
 
 class BuildBoardBot(commands.Bot):

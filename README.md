@@ -49,7 +49,8 @@ A single board message always shows who is building what.
    **Server Members Intent**. The bot needs this to list who's free — it won't start without it.
 4. **OAuth2 → URL Generator**: tick scopes `bot` and `applications.commands`, then tick these bot
    permissions: *Send Messages*, *Embed Links*, *Attach Files*, *Read Message History*,
-   *Create Public Threads*, *Send Messages in Threads*, *Manage Threads*.
+   *Create Public Threads*, *Send Messages in Threads*, *Manage Threads*, and — if you want
+   auto-role on join — *Manage Roles*.
 5. Open the generated URL and invite the bot to your server.
 
 ### 2. Run it
@@ -164,9 +165,49 @@ To back up or reset everything, that one branch is all your data.
 | `/setup` | Admins | Connects roles and channels |
 | `/setup-show` | Admins | Shows current configuration |
 | `/board-refresh` | Admins | Forces the board to redraw |
+| `/welcome-setup` | Admins | Sets up welcome messages, auto-role and goodbyes |
+| `/welcome-test` | Admins | Previews the welcome message on yourself |
+| `/welcome-off` | Admins | Turns welcomes, goodbyes and auto-role back off |
 
 Everything the bot says back to you is ephemeral — only you see it, so channels stay clean.
 Build numbers autocomplete as you type, and `/update` and `/release` list *your* builds first.
+
+## Welcoming new members
+
+The bot also greets people who join, so you don't need a separate welcome bot.
+
+```
+/welcome-setup welcome_channel:#welcome applications_channel:#applications
+               auto_role:@Member goodbye_channel:#goodbye
+```
+
+`auto_role` and `goodbye_channel` are optional. Then `/welcome-test` shows you exactly what a new
+member will see, without needing anyone to actually join.
+
+A new member gets pinged, then an embed:
+
+```
+@newmember
+┌ 🖼  Welcome to ASTRA Smp Events
+│    Welcome @newmember to ASTRA Smp Events!
+│    Please make an application in #applications
+└    You're our 57th member
+```
+
+The server name and member count fill in automatically. The wording itself lives in
+`welcome_card()` in `embeds.py` — change it there if you want it to read differently.
+
+### Auto-role needs one thing set up right
+
+For the bot to hand out a role, **its own role must sit above the role it's giving out** in
+**Server Settings → Roles**, and it needs the **Manage Roles** permission. This is the usual reason
+auto-role silently does nothing.
+
+`/welcome-setup` checks both up front and refuses with the specific fix rather than letting it fail
+on every join, and `/welcome-test` re-checks in case roles get reordered later.
+
+If the role assignment fails at join time, the member still gets their welcome message — the two are
+deliberately independent.
 
 ## Notes
 

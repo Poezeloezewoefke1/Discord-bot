@@ -224,6 +224,54 @@ def board(guild: discord.Guild, builder_role: discord.Role | None) -> discord.Em
     return embed
 
 
+# --------------------------------------------------------------------------
+# joining and leaving
+# --------------------------------------------------------------------------
+
+def ordinal(n: int) -> str:
+    """1 -> 1st, 2 -> 2nd, 11 -> 11th, 21 -> 21st."""
+    if 11 <= (n % 100) <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n:,}{suffix}"
+
+
+def welcome_card(
+    member: discord.Member, applications_channel_id: int | None
+) -> discord.Embed:
+    """The post a new member gets, laid out like the bot this replaces."""
+    guild = member.guild
+
+    lines = [f"Welcome {member.mention} to {guild.name}!"]
+    if applications_channel_id:
+        lines.append(f"Please make an application in <#{applications_channel_id}>")
+
+    embed = discord.Embed(description="\n".join(lines), color=config.COLOR_CLAIMED)
+
+    # Server icon beside the title, matching the original's layout. A server
+    # without an icon still gets the title, just without the picture.
+    icon = guild.icon.url if guild.icon else None
+    embed.set_author(name=f"Welcome to {guild.name}"[:256], icon_url=icon)
+    embed.set_thumbnail(url=member.display_avatar.url)
+
+    if guild.member_count:
+        embed.set_footer(text=f"You're our {ordinal(guild.member_count)} member")
+    return embed
+
+
+def goodbye_card(member: discord.abc.User, guild: discord.Guild) -> discord.Embed:
+    embed = discord.Embed(
+        description=f"**{member.display_name}** left {guild.name}.",
+        color=config.COLOR_ERROR,
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+    if guild.member_count:
+        # Not "N members left" — that reads as "N members departed".
+        embed.set_footer(text=f"Now {guild.member_count:,} members")
+    return embed
+
+
 def error(message: str) -> discord.Embed:
     return discord.Embed(description=f"❌ {message}", color=config.COLOR_ERROR)
 
