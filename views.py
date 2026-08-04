@@ -161,6 +161,56 @@ def build_view(build: sqlite3.Row) -> discord.ui.View:
     return view
 
 
+class ConfirmDeleteView(discord.ui.View):
+    """Are-you-sure for /delete.
+
+    Unlike the build card buttons this is *not* a persistent DynamicItem: it's a
+    throwaway dialog, and a stale confirm button surviving a restart is exactly
+    what you don't want on an irreversible action. It expires instead.
+    """
+
+    def __init__(self, build_id: int, invoker_id: int) -> None:
+        super().__init__(timeout=60)
+        self.build_id = build_id
+        self.invoker_id = invoker_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.invoker_id:
+            await interaction.response.send_message(
+                embed=embeds.error("That confirmation isn't yours."), ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Delete it", emoji="🗑️", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        import service
+
+        for child in self.children:
+            child.disabled = True
+        self.stop()
+
+        await interaction.response.edit_message(
+            embed=embeds.notice(f"Deleting build #{self.build_id}…"), view=None
+        )
+        try:
+            await service.delete_build_everywhere(interaction.client, self.build_id)
+        except config.ConfigError as exc:
+            await interaction.edit_original_response(embed=embeds.error(str(exc)))
+            return
+
+        await interaction.edit_original_response(
+            embed=embeds.success(f"Build #{self.build_id} is gone.")
+        )
+
+    @discord.ui.button(label="Keep it", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.stop()
+        await interaction.response.edit_message(
+            embed=embeds.notice(f"Left build #{self.build_id} alone."), view=None
+        )
+
+
 class RequestModal(discord.ui.Modal, title="Describe the build"):
     """What a script writer fills in to put a build on the board."""
 

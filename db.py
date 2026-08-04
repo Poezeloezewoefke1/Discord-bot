@@ -226,6 +226,17 @@ def reopen_build(build_id: int) -> bool:
         return cur.rowcount == 1
 
 
+def delete_build(build_id: int) -> bool:
+    """Remove a build and its whole update history.
+
+    The updates table declares ON DELETE CASCADE and connect() turns foreign keys
+    on, so the history goes with it rather than being orphaned.
+    """
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM builds WHERE id = ?", (build_id,))
+        return cur.rowcount == 1
+
+
 def list_builds(guild_id: int, status: str | None = None) -> list[sqlite3.Row]:
     with connect() as conn:
         if status:

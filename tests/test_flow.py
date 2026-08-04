@@ -211,6 +211,122 @@ def test_unknown_update_kind_is_rejected():
 
 
 # --------------------------------------------------------------------------
+# deleting
+# --------------------------------------------------------------------------
+
+def test_delete_removes_the_build():
+    build_id = new_build()
+    assert db.delete_build(build_id) is True
+    assert db.get_build(build_id) is None
+
+
+def test_delete_takes_the_update_history_with_it():
+    """Orphaned update rows would keep counting toward other builds' versions."""
+    build_id = new_build()
+    db.add_update(build_id, BUILDER_A, db.KIND_PROGRESS, "a", "a.schem", "/x/a.schem")
+    db.add_update(build_id, BUILDER_B, db.KIND_HANDOFF, "b", "b.schem", "/x/b.schem")
+    assert len(db.list_updates(build_id)) == 2
+
+    db.delete_build(build_id)
+    assert db.list_updates(build_id) == []
+
+
+def test_delete_leaves_other_builds_alone():
+    keep = new_build("Keep me")
+    db.add_update(keep, BUILDER_A, db.KIND_PROGRESS, None, "k.schem", "/x/k.schem")
+    remove = new_build("Delete me")
+    db.add_update(remove, BUILDER_B, db.KIND_PROGRESS, None, "r.schem", "/x/r.schem")
+
+    db.delete_build(remove)
+
+    assert db.get_build(keep) is not None
+    assert db.schematic_count(keep) == 1
+    assert db.latest_schematic(keep)["file_path"] == "/x/k.schem"
+
+
+def test_deleting_a_claimed_build_frees_the_builder():
+    build_id = new_build()
+    db.claim_build(build_id, BUILDER_A)
+    assert db.busy_builder_ids(GUILD) == {BUILDER_A}
+
+    db.delete_build(build_id)
+    assert db.busy_builder_ids(GUILD) == set()
+
+
+def test_deleting_something_that_is_already_gone_is_false():
+    build_id = new_build()
+    db.delete_build(build_id)
+    assert db.delete_build(build_id) is False
+
+
+def test_deleted_builds_leave_the_board():
+    import embeds
+
+    build_id = new_build("Doomed")
+    db.claim_build(build_id, BUILDER_A)
+    assert "Doomed" in str(embeds.board(FakeGuild(), FakeRole([])).fields)
+
+    db.delete_build(build_id)
+    assert "Doomed" not in str(embeds.board(FakeGuild(), FakeRole([])).fields)
+
+
+class FakeMemberWithPerms:
+    """Enough of discord.Member for the permission helpers."""
+
+    def __init__(self, user_id: int, admin: bool = False) -> None:
+        self.id = user_id
+        self.guild_permissions = type("Perms", (), {"manage_guild": admin})()
+        self.roles = []
+
+
+def test_only_the_requester_or_an_admin_can_delete():
+    import service
+
+    build_id = new_build()
+    build = db.get_build(build_id)
+
+    # the script writer who asked for it
+    service.check_can_delete(FakeMemberWithPerms(SCRIPTER), build)
+    # an admin
+    service.check_can_delete(FakeMemberWithPerms(BUILDER_B, admin=True), build)
+
+    # anyone else, including a builder working on it
+    with pytest.raises(config.ConfigError):
+        service.check_can_delete(FakeMemberWithPerms(BUILDER_A), build)
+
+
+def test_the_builder_holding_a_build_still_cannot_delete_it():
+    """They should /release instead — the request stays alive for someone else."""
+    import service
+
+    build_id = new_build()
+    db.claim_build(build_id, BUILDER_A)
+    with pytest.raises(config.ConfigError):
+        service.check_can_delete(FakeMemberWithPerms(BUILDER_A), db.get_build(build_id))
+
+
+def test_delete_confirmation_buttons_are_within_discord_limits():
+    import discord
+    import views
+
+    view = views.ConfirmDeleteView(1, invoker_id=SCRIPTER)
+    buttons = [c for c in view.children if isinstance(c, discord.ui.Button)]
+    assert len(buttons) == 2, "expected a confirm and a cancel button"
+    for button in buttons:
+        assert len(button.label) <= BUTTON_LABEL_LIMIT
+
+    assert view.timeout, "an irreversible confirmation must expire, not linger"
+
+
+def test_ids_are_not_reused_after_a_delete():
+    """Reusing an id would point old buttons and links at the wrong build."""
+    first = new_build()
+    db.delete_build(first)
+    second = new_build()
+    assert second != first
+
+
+# --------------------------------------------------------------------------
 # what the board reads
 # --------------------------------------------------------------------------
 

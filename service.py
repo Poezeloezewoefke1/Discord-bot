@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import pathlib
+import shutil
 import sqlite3
 
 import discord
@@ -53,6 +54,22 @@ def check_builder(member: discord.Member) -> None:
                 "No builder role is configured yet. An admin needs to run `/setup`."
             )
         raise config.ConfigError(f"Only <@&{role_id}> can do that.")
+
+
+def check_can_delete(member: discord.Member, build: sqlite3.Row) -> None:
+    """Only the person who asked for the build, or an admin, may delete it.
+
+    Deliberately not the builder holding it — if they don't want it any more the
+    answer is /release, which keeps the request alive for someone else.
+    """
+    if config.is_admin(member):
+        return
+    if build["requested_by"] == member.id:
+        return
+    raise config.ConfigError(
+        f"Only <@{build['requested_by']}> (who requested it) or an admin can delete "
+        f"build #{build['id']}."
+    )
 
 
 def check_scripter(member: discord.Member) -> None:
@@ -146,6 +163,55 @@ async def post_to_thread(bot: discord.Client, build_id: int, **send_kwargs) -> N
         await thread.send(**send_kwargs)
     except discord.HTTPException:
         log.warning("failed to post in thread for build #%s", build_id, exc_info=True)
+
+
+async def delete_build_everywhere(bot: discord.Client, build_id: int) -> None:
+    """Erase a build: its card, its thread, its schematics and its rows.
+
+    Discord and disk cleanup are best-effort — a missing message or an already
+    deleted thread must not stop the database row going away, or the build would
+    be stuck on the board forever with nothing behind it.
+    """
+    build = db.get_build(build_id)
+    if build is None:
+        raise config.ConfigError(f"Build #{build_id} doesn't exist.")
+
+    guild_id = build["guild_id"]
+    cfg = db.get_config(guild_id)
+
+    if build["thread_id"]:
+        try:
+            thread = bot.get_channel(build["thread_id"]) or await bot.fetch_channel(
+                build["thread_id"]
+            )
+            if isinstance(thread, discord.Thread):
+                await thread.delete()
+        except discord.HTTPException:
+            log.warning("could not delete thread for build #%s", build_id, exc_info=True)
+
+    if build["message_id"] and cfg and cfg["requests_channel_id"]:
+        channel = bot.get_channel(cfg["requests_channel_id"])
+        if isinstance(channel, discord.TextChannel):
+            try:
+                message = await channel.fetch_message(build["message_id"])
+                await message.delete()
+            except discord.NotFound:
+                pass
+            except discord.HTTPException:
+                log.warning("could not delete card for build #%s", build_id, exc_info=True)
+
+    folder = config.build_storage_dir(build_id)
+    if folder.exists():
+        try:
+            shutil.rmtree(folder)
+        except OSError:
+            log.warning("could not delete schematics for build #%s", build_id, exc_info=True)
+
+    db.delete_build(build_id)
+
+    guild = bot.get_guild(guild_id)
+    if guild is not None:
+        schedule_board_refresh(bot, guild)
 
 
 async def archive_thread(bot: discord.Client, build_id: int) -> None:

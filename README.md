@@ -157,6 +157,7 @@ To back up or reset everything, that one branch is all your data.
 | `/claim <build>` | Builders | Takes an open build so nobody doubles up |
 | `/update <build> <status> [file] [note]` | The builder holding it | Posts progress, with a schematic |
 | `/release <build>` | The builder holding it | Gives it back without uploading |
+| `/delete <build>` | Whoever requested it, or admins | Deletes it for good, after a confirmation |
 | `/builds [status]` | Anyone | Lists builds and who's on them |
 | `/build <build>` | Anyone | Full detail on one build, including its handoff history |
 | `/schematic <build>` | Anyone | Downloads the latest schematic |
@@ -178,6 +179,11 @@ two are all your data.
 
 **Admins bypass every role check**, so you can't lock yourself out, and admins can force-release a
 build if a builder goes inactive.
+
+**Deleting is permanent.** `/delete` removes the request, its thread, its whole history and every
+schematic uploaded to it — the confirmation tells you exactly how many files that is before you
+commit. Only the person who requested the build or an admin can do it; a builder who no longer
+wants a build should `/release` it instead, so the request stays alive for someone else.
 
 **Buttons keep working after a restart.** Build IDs are encoded into the buttons themselves, so old
 cards stay live and you never need to re-post them.

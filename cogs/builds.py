@@ -10,7 +10,7 @@ import config
 import db
 import embeds
 import service
-from views import RequestModal
+from views import ConfirmDeleteView, RequestModal
 
 STATUS_CHOICES = [
     app_commands.Choice(name="Still building — this stays mine", value=db.KIND_PROGRESS),
@@ -32,15 +32,18 @@ class BuildsCog(commands.Cog):
     # ----------------------------------------------------------------------
 
     async def _autocomplete(
-        self, interaction: discord.Interaction, current: str, mine_first: bool
+        self,
+        interaction: discord.Interaction,
+        current: str,
+        mine_first: bool,
+        include_finished: bool = False,
     ) -> list[app_commands.Choice[int]]:
         if interaction.guild is None:
             return []
-        builds = [
-            b
-            for b in db.list_builds(interaction.guild.id)
-            if b["status"] != db.STATUS_COMPLETE
-        ]
+        builds = list(db.list_builds(interaction.guild.id))
+        if not include_finished:
+            # Finished builds are noise when you're picking something to work on.
+            builds = [b for b in builds if b["status"] != db.STATUS_COMPLETE]
         if mine_first:
             mine = [b for b in builds if b["claimed_by"] == interaction.user.id]
             others = [b for b in builds if b["claimed_by"] != interaction.user.id]
@@ -58,6 +61,12 @@ class BuildsCog(commands.Cog):
 
     async def any_build_autocomplete(self, interaction, current: str):
         return await self._autocomplete(interaction, current, mine_first=False)
+
+    async def deletable_build_autocomplete(self, interaction, current: str):
+        # Includes finished builds — clearing out old ones is the main reason to delete.
+        return await self._autocomplete(
+            interaction, current, mine_first=False, include_finished=True
+        )
 
     # ----------------------------------------------------------------------
     # script writer side
@@ -209,6 +218,51 @@ class BuildsCog(commands.Cog):
             await interaction.response.send_message(
                 embed=embeds.error(str(exc)), ephemeral=True
             )
+
+    @app_commands.command(name="delete", description="Delete a build request for good")
+    @app_commands.describe(build="Which build to delete")
+    @app_commands.autocomplete(build=deletable_build_autocomplete)
+    @app_commands.guild_only()
+    async def delete(self, interaction: discord.Interaction, build: int) -> None:
+        row = db.get_build(build)
+        if row is None or row["guild_id"] != interaction.guild.id:
+            await interaction.response.send_message(
+                embed=embeds.error(f"Build #{build} doesn't exist."), ephemeral=True
+            )
+            return
+
+        try:
+            service.check_can_delete(interaction.user, row)
+        except config.ConfigError as exc:
+            await interaction.response.send_message(
+                embed=embeds.error(str(exc)), ephemeral=True
+            )
+            return
+
+        # Spell out what disappears. Deleting a build with uploaded schematics
+        # throws away real work, and there is no undo.
+        losses = ["the request and its discussion thread"]
+        files = db.schematic_count(build)
+        if files:
+            losses.append(f"**{files} uploaded schematic{'s' if files != 1 else ''}**")
+        if row["status"] == db.STATUS_CLAIMED:
+            losses.append(f"<@{row['claimed_by']}>'s claim on it")
+
+        if len(losses) == 1:
+            summary = losses[0]
+        else:
+            summary = f"{', '.join(losses[:-1])} and {losses[-1]}"
+
+        warning = embeds.notice(
+            f"Delete **#{build} {row['title']}**?\n\n"
+            f"This permanently removes {summary}.\n"
+            "It cannot be undone."
+        )
+        await interaction.response.send_message(
+            embed=warning,
+            view=ConfirmDeleteView(build, interaction.user.id),
+            ephemeral=True,
+        )
 
     # ----------------------------------------------------------------------
     # looking things up
