@@ -381,6 +381,98 @@ def trap_armed(member: discord.abc.User, channel_id: int, action: str) -> discor
     return embed
 
 
+# --------------------------------------------------------------------------
+# tickets
+# --------------------------------------------------------------------------
+
+def ticket_panel(guild: discord.Guild, support_role_id: int | None) -> discord.Embed:
+    """The always-there message people press to open a ticket."""
+    import tickets
+
+    who = f"<@&{support_role_id}>" if support_role_id else "staff"
+    lines = [
+        f"Pick the option that fits. A private channel opens that only you and {who} can see.",
+        "",
+    ]
+    for kind, info in tickets.KINDS.items():
+        lines.append(f"{info['emoji']} **{info['label']}** — {info['blurb']}")
+
+    embed = discord.Embed(
+        title="🎫 Need help?",
+        description="\n".join(lines),
+        color=config.COLOR_CLAIMED,
+    )
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    embed.set_footer(text="One open ticket at a time. Abuse of this will be treated as spam.")
+    return embed
+
+
+def ticket_header(ticket, opener: discord.abc.User, support_role_id: int | None) -> discord.Embed:
+    """Posted at the top of a freshly opened ticket."""
+    import tickets
+
+    embed = discord.Embed(
+        title=f"{tickets.kind_emoji(ticket['kind'])} Ticket #{ticket['id']:04d} · "
+              f"{tickets.kind_label(ticket['kind'])}",
+        color=config.COLOR_CLAIMED,
+        timestamp=discord.utils.utcnow(),
+    )
+    embed.add_field(name="Opened by", value=opener.mention, inline=True)
+    if ticket["claimed_by"]:
+        embed.add_field(name="Handled by", value=f"<@{ticket['claimed_by']}>", inline=True)
+
+    if ticket["about"]:
+        embed.add_field(name="About", value=ticket["about"][:1024], inline=False)
+    if ticket["subject"]:
+        embed.add_field(name="Details", value=ticket["subject"][:1024], inline=False)
+
+    embed.set_footer(text="Staff: claim it so nobody doubles up, then close when it's done.")
+    return embed
+
+
+def ticket_closed(ticket, closed_by: discord.abc.User) -> discord.Embed:
+    """Replaces the header once closed. The channel is kept, not deleted."""
+    embed = discord.Embed(
+        title=f"🔒 Ticket #{ticket['id']:04d} closed",
+        description=(
+            f"Closed by {closed_by.mention}.\n"
+            f"{ticket['close_reason'] or '*no reason given*'}"
+        ),
+        color=config.COLOR_GOODBYE,
+        timestamp=discord.utils.utcnow(),
+    )
+    embed.set_footer(
+        text="The channel is kept so nothing is lost. Take a transcript before deleting it."
+    )
+    return embed
+
+
+def ticket_log(ticket, actor: discord.abc.User, event: str) -> discord.Embed:
+    import tickets
+
+    colour = {
+        "opened": config.COLOR_CLAIMED,
+        "claimed": config.COLOR_OPEN,
+        "closed": config.COLOR_GOODBYE,
+        "reopened": config.COLOR_OPEN,
+        "deleted": config.COLOR_ERROR,
+    }.get(event, config.COLOR_CLAIMED)
+
+    embed = discord.Embed(
+        title=f"Ticket #{ticket['id']:04d} {event}",
+        description=(
+            f"{tickets.kind_emoji(ticket['kind'])} {tickets.kind_label(ticket['kind'])}\n"
+            f"Opened by <@{ticket['opener_id']}> · {event} by {actor.mention}"
+        ),
+        color=colour,
+        timestamp=discord.utils.utcnow(),
+    )
+    if ticket["close_reason"] and event == "closed":
+        embed.add_field(name="Reason", value=ticket["close_reason"][:1024], inline=False)
+    return embed
+
+
 def error(message: str) -> discord.Embed:
     return discord.Embed(description=f"❌ {message}", color=config.COLOR_ERROR)
 

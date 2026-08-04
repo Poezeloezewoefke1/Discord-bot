@@ -173,6 +173,10 @@ To back up or reset everything, that one branch is all your data.
 | `/security-setup` | Admins | Sets up anti-raid and anti-spam protection |
 | `/security-test` | Admins | Checks the protections are armed, and whether *you* are exempt |
 | `/security-mode` | Admins | Switches between watch-only and acting for real |
+| `/ticket-setup` | Admins | Sets up the ticket system and posts the panel |
+| `/ticket-panel` | Admins | Posts the panel again if it gets deleted |
+| `/ticket-add` | Support | Adds someone to the ticket you're in |
+| `/ticket-close` | Support / opener | Closes the ticket you're in |
 
 Everything the bot says back to you is ephemeral — only you see it, so channels stay clean.
 Build numbers autocomplete as you type, and `/update` and `/release` list *your* builds first.
@@ -250,6 +254,57 @@ on every join, and `/welcome-test` re-checks in case roles get reordered later.
 
 If the role assignment fails at join time, the member still gets their welcome message — the two are
 deliberately independent.
+
+## Support tickets
+
+A panel with buttons. Pressing one opens a private channel only that person and your support role
+can see.
+
+```
+/ticket-setup category:TICKETS support_role:@Staff
+              log_channel:#ticket-log panel_channel:#support
+```
+
+```
+🎫 Need help?
+Pick the option that fits. A private channel opens that only you and @Staff can see.
+
+🚨 Report a player — Tell us who and what happened.
+❓ Help / support — Describe what you need.
+
+[🚨 Report a player]   [❓ Help / support]
+```
+
+A short form asks what's wrong before the channel is made, so staff arrive already knowing the
+problem. The channel is named `report-0007` / `help-0007`, and inside it staff get **Claim** and
+**Close**.
+
+**One open ticket per person.** A second press points them at the one they already have — without
+that, one bored member can fill the category in a minute.
+
+### Closing keeps the channel
+
+**Close** locks the ticket: the opener loses access and the channel is renamed `closed-0007`. It is
+*not* deleted. Staff then get **Reopen**, **Transcript** and **Delete channel** — deletion is always
+a deliberate, separate step, so nothing is lost by accident.
+
+### Transcripts and the Message Content intent
+
+A transcript records who spoke, when, and any attachments. **Message text needs the Message Content
+intent**, which is currently off — so until you enable it, transcripts carry a header saying the text
+is missing and why, rather than looking complete but empty.
+
+This is the second reason to enable that intent (scam-link scanning is the other). Same order as
+always: **Developer Portal first**, then `ENABLE_MESSAGE_CONTENT: 1`. Reversed, the bot won't start.
+
+Because closing keeps the channel, the missing intent costs nothing day to day — the conversation is
+still there in Discord. It only matters if you delete a channel and later want the words back.
+
+### Permissions
+
+**Manage Channels** is required — without it no ticket can be created at all. The log channel also
+needs **Attach Files** for transcripts. `/ticket-setup` checks both up front, and warns when the
+category is near Discord's 50-channel limit.
 
 ## Anti-raid and anti-spam protection
 

@@ -232,6 +232,222 @@ def security_alert_view(user_id: int) -> discord.ui.View:
     return view
 
 
+# --------------------------------------------------------------------------
+# tickets
+# --------------------------------------------------------------------------
+
+def _tickets_cog(interaction: discord.Interaction):
+    return interaction.client.get_cog("TicketsCog")
+
+
+async def _call_cog(interaction: discord.Interaction, method: str, *args) -> None:
+    cog = _tickets_cog(interaction)
+    if cog is None:
+        await interaction.response.send_message(
+            embed=embeds.error("Tickets aren't loaded right now. Try again in a minute."),
+            ephemeral=True,
+        )
+        return
+    await _guard(interaction, getattr(cog, method)(interaction, *args))
+
+
+class TicketOpenModal(discord.ui.Modal):
+    """The short form shown before a ticket channel is created.
+
+    Asking up front means staff open the channel already knowing what it's about,
+    instead of a channel that says nothing until the person types again.
+    """
+
+    def __init__(self, kind: str) -> None:
+        import tickets
+
+        super().__init__(title=tickets.kind_label(kind)[:45])
+        self.kind = kind
+
+        self.about: discord.ui.TextInput | None = None
+        if kind == tickets.KIND_REPORT:
+            self.about = discord.ui.TextInput(
+                label="Who is this about?",
+                placeholder="Their Discord name, or Minecraft username",
+                max_length=100,
+                required=True,
+            )
+            self.add_item(self.about)
+
+        self.details = discord.ui.TextInput(
+            label="What happened?" if kind == tickets.KIND_REPORT else "What do you need?",
+            style=discord.TextStyle.paragraph,
+            placeholder="As much detail as you can. Screenshots can go in the channel after.",
+            max_length=2000,
+            required=True,
+        )
+        self.add_item(self.details)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _call_cog(
+            interaction,
+            "open_ticket",
+            self.kind,
+            str(self.details),
+            str(self.about) if self.about is not None else None,
+        )
+
+
+class TicketOpenButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"tk:open:(?P<kind>[a-z]+)",
+):
+    def __init__(self, kind: str) -> None:
+        import tickets
+
+        self.kind = kind
+        info = tickets.KINDS.get(kind, {})
+        super().__init__(
+            discord.ui.Button(
+                label=info.get("label", "Open a ticket"),
+                emoji=info.get("emoji", "🎫"),
+                style=discord.ButtonStyle.primary,
+                custom_id=f"tk:open:{kind}",
+            )
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match: re.Match[str], /):
+        return cls(match["kind"])
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        cog = _tickets_cog(interaction)
+        if cog is None:
+            await interaction.response.send_message(
+                embed=embeds.error("Tickets aren't loaded right now. Try again in a minute."),
+                ephemeral=True,
+            )
+            return
+        # Refuse before showing the form, so nobody fills one in for nothing.
+        blocker = await cog.why_cannot_open(interaction)
+        if blocker:
+            await interaction.response.send_message(
+                embed=embeds.notice(blocker), ephemeral=True
+            )
+            return
+        await interaction.response.send_modal(TicketOpenModal(self.kind))
+
+
+def _ticket_button(action: str, ticket_id: int, label: str, emoji: str, style) -> discord.ui.Button:
+    return discord.ui.Button(
+        label=label, emoji=emoji, style=style, custom_id=f"tk:{action}:{ticket_id}"
+    )
+
+
+class TicketClaimButton(
+    discord.ui.DynamicItem[discord.ui.Button], template=r"tk:claim:(?P<ticket_id>\d+)"
+):
+    def __init__(self, ticket_id: int) -> None:
+        self.ticket_id = ticket_id
+        super().__init__(
+            _ticket_button("claim", ticket_id, "Claim", "🙋", discord.ButtonStyle.primary)
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match: re.Match[str], /):
+        return cls(int(match["ticket_id"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await _call_cog(interaction, "claim_ticket", self.ticket_id)
+
+
+class TicketCloseButton(
+    discord.ui.DynamicItem[discord.ui.Button], template=r"tk:close:(?P<ticket_id>\d+)"
+):
+    def __init__(self, ticket_id: int) -> None:
+        self.ticket_id = ticket_id
+        super().__init__(
+            _ticket_button("close", ticket_id, "Close", "🔒", discord.ButtonStyle.secondary)
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match: re.Match[str], /):
+        return cls(int(match["ticket_id"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await _call_cog(interaction, "close_ticket", self.ticket_id, None)
+
+
+class TicketReopenButton(
+    discord.ui.DynamicItem[discord.ui.Button], template=r"tk:reopen:(?P<ticket_id>\d+)"
+):
+    def __init__(self, ticket_id: int) -> None:
+        self.ticket_id = ticket_id
+        super().__init__(
+            _ticket_button("reopen", ticket_id, "Reopen", "🔓", discord.ButtonStyle.success)
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match: re.Match[str], /):
+        return cls(int(match["ticket_id"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await _call_cog(interaction, "reopen_ticket", self.ticket_id)
+
+
+class TicketTranscriptButton(
+    discord.ui.DynamicItem[discord.ui.Button], template=r"tk:script:(?P<ticket_id>\d+)"
+):
+    def __init__(self, ticket_id: int) -> None:
+        self.ticket_id = ticket_id
+        super().__init__(
+            _ticket_button("script", ticket_id, "Transcript", "📄", discord.ButtonStyle.secondary)
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match: re.Match[str], /):
+        return cls(int(match["ticket_id"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await _call_cog(interaction, "send_transcript", self.ticket_id)
+
+
+class TicketDeleteButton(
+    discord.ui.DynamicItem[discord.ui.Button], template=r"tk:delete:(?P<ticket_id>\d+)"
+):
+    def __init__(self, ticket_id: int) -> None:
+        self.ticket_id = ticket_id
+        super().__init__(
+            _ticket_button("delete", ticket_id, "Delete channel", "🗑️", discord.ButtonStyle.danger)
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match: re.Match[str], /):
+        return cls(int(match["ticket_id"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await _call_cog(interaction, "delete_ticket", self.ticket_id)
+
+
+def ticket_panel_view() -> discord.ui.View:
+    import tickets
+
+    view = discord.ui.View(timeout=None)
+    for kind in tickets.KINDS:
+        view.add_item(TicketOpenButton(kind))
+    return view
+
+
+def ticket_open_view(ticket_id: int) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(TicketClaimButton(ticket_id))
+    view.add_item(TicketCloseButton(ticket_id))
+    return view
+
+
+def ticket_closed_view(ticket_id: int) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(TicketReopenButton(ticket_id))
+    view.add_item(TicketTranscriptButton(ticket_id))
+    view.add_item(TicketDeleteButton(ticket_id))
+    return view
+
+
 DYNAMIC_ITEMS = (
     ClaimButton,
     UpdateButton,
@@ -239,6 +455,12 @@ DYNAMIC_ITEMS = (
     SchematicButton,
     SecurityBanButton,
     SecurityIgnoreButton,
+    TicketOpenButton,
+    TicketClaimButton,
+    TicketCloseButton,
+    TicketReopenButton,
+    TicketTranscriptButton,
+    TicketDeleteButton,
 )
 
 

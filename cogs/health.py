@@ -212,6 +212,43 @@ class HealthCog(commands.Cog):
             else:
                 protection.append(f"{INFO} Scam links: off")
 
+        # --- tickets ----------------------------------------------------
+        ticketing = []
+        if cfg is None or not cfg["ticket_category_id"]:
+            ticketing.append(f"{INFO} Off — set up with `/ticket-setup`")
+        else:
+            from cogs.tickets import CATEGORY_LIMIT
+
+            category = guild.get_channel(cfg["ticket_category_id"])
+            if not isinstance(category, discord.CategoryChannel):
+                ticketing.append(f"{BAD} Category was deleted — re-run `/ticket-setup`")
+                problems += 1
+            else:
+                spare = CATEGORY_LIMIT - len(category.channels)
+                marker = WARN if spare <= 10 else OK
+                ticketing.append(f"{marker} Category: **{category.name}** ({spare} slots left)")
+
+            if not guild.me.guild_permissions.manage_channels:
+                ticketing.append(f"{BAD} I lack **Manage Channels** — no ticket can be created")
+                problems += 1
+
+            line, ok = self._channel_check(
+                guild, cfg["ticket_log_channel_id"], "Ticket log",
+                ("send_messages", "embed_links", "attach_files"),
+            )
+            ticketing.append(line)
+            problems += not ok
+
+            open_now = len(db.list_tickets(guild.id, db.TICKET_OPEN))
+            claimed = len(db.list_tickets(guild.id, db.TICKET_CLAIMED))
+            ticketing.append(f"{INFO} {open_now} open · {claimed} being handled")
+
+            if not self.bot.intents.message_content:
+                ticketing.append(
+                    f"{WARN} Transcripts won't include message text "
+                    f"(Message Content intent is off)"
+                )
+
         # --- data -------------------------------------------------------
         try:
             counts = {
@@ -240,6 +277,7 @@ class HealthCog(commands.Cog):
         embed.add_field(name="Build board", value="\n".join(board)[:1024], inline=False)
         embed.add_field(name="Welcome messages", value="\n".join(welcome)[:1024], inline=False)
         embed.add_field(name="Protection", value="\n".join(protection)[:1024], inline=False)
+        embed.add_field(name="Tickets", value="\n".join(ticketing)[:1024], inline=False)
         embed.add_field(name="Data", value="\n".join(data)[:1024], inline=False)
         embed.set_footer(text="Only you can see this")
 

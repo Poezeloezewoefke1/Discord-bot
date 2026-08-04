@@ -69,6 +69,25 @@ CREATE TABLE IF NOT EXISTS updates (
     created_at TEXT    NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS tickets (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id     INTEGER NOT NULL,
+    channel_id   INTEGER,
+    opener_id    INTEGER NOT NULL,
+    kind         TEXT    NOT NULL,
+    subject      TEXT,
+    about        TEXT,
+    status       TEXT    NOT NULL DEFAULT 'open',
+    claimed_by   INTEGER,
+    created_at   TEXT    NOT NULL,
+    closed_at    TEXT,
+    closed_by    INTEGER,
+    close_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_tickets_guild_status ON tickets (guild_id, status);
+CREATE INDEX IF NOT EXISTS idx_tickets_channel ON tickets (channel_id);
+
 CREATE INDEX IF NOT EXISTS idx_builds_guild_status ON builds (guild_id, status);
 CREATE INDEX IF NOT EXISTS idx_updates_build ON updates (build_id, id);
 """
@@ -127,6 +146,12 @@ LATER_CONFIG_COLUMNS = (
     ("raid_join_count", "INTEGER"),
     ("raid_window_seconds", "INTEGER"),
     ("scam_scanning", "INTEGER"),
+    # tickets
+    ("ticket_category_id", "INTEGER"),
+    ("ticket_support_role_id", "INTEGER"),
+    ("ticket_log_channel_id", "INTEGER"),
+    ("ticket_panel_channel_id", "INTEGER"),
+    ("ticket_panel_message_id", "INTEGER"),
 )
 
 LATER_CONFIG_NAMES = tuple(name for name, _ in LATER_CONFIG_COLUMNS)
@@ -320,6 +345,115 @@ def busy_builder_ids(guild_id: int) -> set[int]:
             (guild_id, STATUS_CLAIMED),
         ).fetchall()
     return {int(row["claimed_by"]) for row in rows}
+
+
+# --------------------------------------------------------------------------
+# tickets
+# --------------------------------------------------------------------------
+
+TICKET_OPEN = "open"
+TICKET_CLAIMED = "claimed"
+TICKET_CLOSED = "closed"
+
+TICKET_LIVE = (TICKET_OPEN, TICKET_CLAIMED)
+
+
+def create_ticket(
+    guild_id: int, opener_id: int, kind: str, subject: str | None, about: str | None
+) -> int:
+    with connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO tickets (guild_id, opener_id, kind, subject, about, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (guild_id, opener_id, kind, subject, about, TICKET_OPEN, now_iso()),
+        )
+        return int(cur.lastrowid)
+
+
+def get_ticket(ticket_id: int) -> sqlite3.Row | None:
+    with connect() as conn:
+        return conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+
+
+def get_ticket_by_channel(channel_id: int) -> sqlite3.Row | None:
+    with connect() as conn:
+        return conn.execute(
+            "SELECT * FROM tickets WHERE channel_id = ?", (channel_id,)
+        ).fetchone()
+
+
+def attach_ticket_channel(ticket_id: int, channel_id: int) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE tickets SET channel_id = ? WHERE id = ?", (channel_id, ticket_id)
+        )
+
+
+def open_ticket_for(guild_id: int, opener_id: int) -> sqlite3.Row | None:
+    """The ticket this person already has open, if any.
+
+    One open ticket per person: without this, somebody bored can create fifty
+    channels in a minute.
+    """
+    placeholders = ", ".join("?" for _ in TICKET_LIVE)
+    with connect() as conn:
+        return conn.execute(
+            f"""SELECT * FROM tickets
+                 WHERE guild_id = ? AND opener_id = ? AND status IN ({placeholders})
+                 ORDER BY id DESC LIMIT 1""",
+            (guild_id, opener_id, *TICKET_LIVE),
+        ).fetchone()
+
+
+def claim_ticket(ticket_id: int, user_id: int) -> bool:
+    with connect() as conn:
+        cur = conn.execute(
+            """UPDATE tickets SET status = ?, claimed_by = ?
+                WHERE id = ? AND status = ?""",
+            (TICKET_CLAIMED, user_id, ticket_id, TICKET_OPEN),
+        )
+        return cur.rowcount == 1
+
+
+def close_ticket(ticket_id: int, closed_by: int, reason: str | None) -> bool:
+    placeholders = ", ".join("?" for _ in TICKET_LIVE)
+    with connect() as conn:
+        cur = conn.execute(
+            f"""UPDATE tickets
+                   SET status = ?, closed_at = ?, closed_by = ?, close_reason = ?
+                 WHERE id = ? AND status IN ({placeholders})""",
+            (TICKET_CLOSED, now_iso(), closed_by, reason, ticket_id, *TICKET_LIVE),
+        )
+        return cur.rowcount == 1
+
+
+def reopen_ticket(ticket_id: int) -> bool:
+    with connect() as conn:
+        cur = conn.execute(
+            """UPDATE tickets
+                   SET status = ?, closed_at = NULL, closed_by = NULL, close_reason = NULL
+                 WHERE id = ? AND status = ?""",
+            (TICKET_OPEN, ticket_id, TICKET_CLOSED),
+        )
+        return cur.rowcount == 1
+
+
+def delete_ticket(ticket_id: int) -> bool:
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+        return cur.rowcount == 1
+
+
+def list_tickets(guild_id: int, status: str | None = None) -> list[sqlite3.Row]:
+    with connect() as conn:
+        if status:
+            return conn.execute(
+                "SELECT * FROM tickets WHERE guild_id = ? AND status = ? ORDER BY id",
+                (guild_id, status),
+            ).fetchall()
+        return conn.execute(
+            "SELECT * FROM tickets WHERE guild_id = ? ORDER BY id", (guild_id,)
+        ).fetchall()
 
 
 # --------------------------------------------------------------------------
