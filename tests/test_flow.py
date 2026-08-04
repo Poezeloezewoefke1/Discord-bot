@@ -379,6 +379,97 @@ def test_board_renders_without_a_builder_role_configured():
     _assert_within_discord_limits(embeds.board(FakeGuild(), None))
 
 
+# --------------------------------------------------------------------------
+# Discord's UI limits
+#
+# These are enforced by Discord's API, not by discord.py, so an over-long string
+# sails through import and every unit test and only fails as a 400 the moment a
+# real user runs the command. That is exactly how the /request modal broke in
+# production, so each limit gets pinned here.
+# --------------------------------------------------------------------------
+
+MODAL_TITLE_LIMIT = 45
+TEXT_INPUT_LABEL_LIMIT = 45
+TEXT_INPUT_PLACEHOLDER_LIMIT = 100
+BUTTON_LABEL_LIMIT = 80
+COMMAND_DESCRIPTION_LIMIT = 100
+
+
+def test_request_modal_is_within_discord_limits():
+    import discord
+    import views
+
+    modal = views.RequestModal()
+    assert len(modal.title) <= MODAL_TITLE_LIMIT
+
+    fields = [c for c in modal.children if isinstance(c, discord.ui.TextInput)]
+    assert fields, "the modal should have text inputs"
+
+    for field in fields:
+        assert len(field.label) <= TEXT_INPUT_LABEL_LIMIT, f"label too long: {field.label}"
+        if field.placeholder:
+            assert len(field.placeholder) <= TEXT_INPUT_PLACEHOLDER_LIMIT, (
+                f"placeholder is {len(field.placeholder)} chars, Discord's limit is "
+                f"{TEXT_INPUT_PLACEHOLDER_LIMIT} — Discord rejects the entire modal: "
+                f"{field.placeholder!r}"
+            )
+
+
+def test_build_card_buttons_are_within_discord_limits():
+    import discord
+    import views
+
+    build_id = new_build()
+    db.add_update(build_id, BUILDER_A, db.KIND_PROGRESS, None, "a.schem", "/x/a.schem")
+
+    # Cover every state, since the card shows a different button set in each.
+    # The children are DynamicItem wrappers; the real Button is at `.item`.
+    seen = 0
+    for setup in (lambda: None,
+                  lambda: db.claim_build(build_id, BUILDER_A),
+                  lambda: db.complete_build(build_id)):
+        setup()
+        for wrapper in views.build_view(db.get_build(build_id)).children:
+            button = getattr(wrapper, "item", wrapper)
+            if not isinstance(button, discord.ui.Button):
+                continue
+            seen += 1
+            assert len(button.label) <= BUTTON_LABEL_LIMIT, f"button label too long: {button.label}"
+            assert button.custom_id, "persistent buttons need a custom_id to survive restarts"
+            assert views.DYNAMIC_ITEMS, "buttons must be registered for restarts"
+    assert seen, "expected buttons on the build card"
+
+
+def test_slash_command_text_is_within_discord_limits():
+    """An over-long description makes the whole command tree fail to sync."""
+    import asyncio
+
+    import discord
+    from discord.ext import commands as dcommands
+
+    async def build_tree():
+        intents = discord.Intents.default()
+        intents.members = True
+        bot = dcommands.Bot(command_prefix="!", intents=intents)
+        for cog in ("cogs.setup", "cogs.builds"):
+            await bot.load_extension(cog)
+        found = list(bot.tree.get_commands())
+        await bot.close()
+        return found
+
+    found = asyncio.run(build_tree())
+    assert found, "no commands registered"
+
+    for command in found:
+        assert len(command.description) <= COMMAND_DESCRIPTION_LIMIT, (
+            f"/{command.name} description is {len(command.description)} chars"
+        )
+        for param in getattr(command, "parameters", []):
+            assert len(param.description) <= COMMAND_DESCRIPTION_LIMIT, (
+                f"/{command.name} parameter '{param.name}' description is too long"
+            )
+
+
 def test_version_label_counts_only_files():
     import embeds
 

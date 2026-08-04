@@ -173,10 +173,8 @@ class RequestModal(discord.ui.Modal, title="Describe the build"):
     description = discord.ui.TextInput(
         label="What needs to be built?",
         style=discord.TextStyle.paragraph,
-        placeholder=(
-            "Size, theme, where it goes, what it's for, anything the builder needs "
-            "to know. The more detail, the fewer questions later."
-        ),
+        # Discord rejects the whole modal if this exceeds 100 characters.
+        placeholder="Size, theme, where it goes, what it's for. More detail = fewer questions later.",
         max_length=3000,
         required=True,
     )

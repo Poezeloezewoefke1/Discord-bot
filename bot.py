@@ -84,11 +84,23 @@ class BuildBoardBot(commands.Bot):
     async def on_app_command_error(
         self, interaction: discord.Interaction, error: Exception
     ) -> None:
-        if isinstance(error, config.ConfigError):
-            message = str(error)
+        # discord.py wraps whatever a command raised in CommandInvokeError, so the
+        # real exception is one level down. Without unwrapping, even our own
+        # friendly ConfigError messages would come out as "something went wrong".
+        original = getattr(error, "original", error)
+        command = interaction.command.name if interaction.command else "unknown"
+
+        if isinstance(original, config.ConfigError):
+            message = str(original)
         else:
-            log.exception("command error", exc_info=error)
-            message = "Something went wrong on my end. Check the bot logs."
+            log.exception("error running /%s", command, exc_info=original)
+            # Say what actually broke. On a hosted runner the logs can't be read
+            # until the job ends, so "check the logs" is useless advice there.
+            detail = f"{type(original).__name__}: {original}"
+            message = (
+                f"Something went wrong running `/{command}`.\n"
+                f"```{detail[:400]}```"
+            )
         try:
             if interaction.response.is_done():
                 await interaction.followup.send(embed=embeds.error(message), ephemeral=True)
