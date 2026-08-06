@@ -341,19 +341,157 @@ def test_a_normal_shift_end_is_not_reported_as_a_failure():
         assert code in script, f"exit {code} is not handled"
 
 
-def test_the_schedule_fires_at_least_hourly():
-    """The cron is the only thing that starts a successor, so a long gap between
-    fires is a long gap in uptime whenever GitHub drops one."""
+def test_the_workflow_can_never_start_itself():
+    """The bot now lives on an always-on machine and this workflow is only the
+    emergency fallback. A scheduled fire would put a second bot online beside
+    the real one, and every command would be answered twice."""
     workflow = _workflow("bot.yml")
-    crons = [entry["cron"] for entry in _triggers(workflow)["schedule"]]
-    assert crons, "no schedule means the bot never restarts itself"
-
-    for cron in crons:
-        minute, hour, *_ = cron.split()
-        assert hour == "*", f"{cron} fires less often than hourly"
-        assert minute.isdigit(), f"{cron} should fire at a fixed minute"
+    assert "schedule" not in _triggers(workflow), (
+        "a schedule here races the real host — starting the fallback must be a "
+        "decision somebody makes"
+    )
 
 
 def test_manual_dispatch_is_still_possible():
-    """Needed to deploy a fix without waiting for the next scheduled fire."""
+    """The fallback has to be startable, or it isn't a fallback."""
     assert "workflow_dispatch" in _triggers(_workflow("bot.yml"))
+
+
+# --------------------------------------------------------------------------
+# the real host
+#
+# A unit file is configuration that only fails at 4am on the night it matters,
+# so the settings that make it survive a crash are checked here rather than
+# discovered later.
+# --------------------------------------------------------------------------
+
+DEPLOY = ROOT / "deploy"
+
+
+def _unit(name: str) -> dict[str, str]:
+    """Flatten a unit file to {key: value}. Good enough — no key repeats here."""
+    settings = {}
+    for line in (DEPLOY / name).read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith((";", "#", "[")):
+            continue
+        key, _, value = line.partition("=")
+        settings[key.strip()] = value.strip()
+    return settings
+
+
+def test_the_bot_restarts_itself_after_a_crash():
+    """The whole reason for leaving Actions was the bot staying down."""
+    unit = _unit("astra-bot.service")
+    assert unit["Restart"] == "always"
+    assert int(unit["RestartSec"]) <= 30, "a slow restart is a long outage"
+
+
+def test_it_never_gives_up_restarting():
+    """systemd's default stops trying after 5 restarts in 10 seconds — which is
+    exactly the situation you don't want it to give up on."""
+    assert _unit("astra-bot.service")["StartLimitIntervalSec"] == "0"
+
+
+def test_it_comes_back_after_a_reboot():
+    assert _unit("astra-bot.service")["WantedBy"] == "multi-user.target"
+
+
+def test_it_waits_for_real_networking():
+    """`network.target` only means an interface exists. The bot opens a socket to
+    Discord immediately, so it needs DNS to actually work."""
+    unit = _unit("astra-bot.service")
+    assert unit["After"] == "network-online.target"
+    assert unit["Wants"] == "network-online.target"
+
+
+def test_the_token_is_not_in_the_unit_file():
+    """Unit files under /etc/systemd/system are world-readable; .env is 600."""
+    text = (DEPLOY / "astra-bot.service").read_text()
+    assert "DISCORD_TOKEN" not in text
+    assert "Environment=" not in text
+
+
+def test_the_installer_makes_the_env_file_unreadable_to_others():
+    assert "chmod 600" in (DEPLOY / "install.sh").read_text()
+
+
+def test_the_installer_stops_on_the_first_error():
+    """Half an install is worse than none — it leaves a service pointing at a
+    venv that was never built."""
+    for script in ("install.sh", "update.sh"):
+        assert "set -euo pipefail" in (DEPLOY / script).read_text(), (
+            f"{script} would carry on after a failed step"
+        )
+
+
+def test_the_installer_brings_the_existing_data_across():
+    """Everything the server knows is on the bot-data branch. An install that
+    starts from an empty database silently loses every build and application."""
+    text = (DEPLOY / "install.sh").read_text()
+    assert "sync_state.py" in text and "restore" in text
+
+
+def test_the_installer_says_to_turn_the_workflow_off():
+    """Two bots online answer every command twice."""
+    assert "Disable workflow" in (DEPLOY / "install.sh").read_text()
+
+
+def test_backups_survive_the_machine_being_off():
+    unit = _unit("astra-bot-backup.timer")
+    assert unit["Persistent"] == "true", "a machine that was off would skip the day"
+
+
+def test_a_snapshot_of_a_live_database_is_valid(workspace):
+    """Copying the file mid-write gives a torn database. The backup script uses
+    sqlite's own backup API, so a snapshot taken while the bot writes is sound."""
+    seed_database(workspace)
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "hosting" / "backup_db.py"),
+         "--db", workspace.env["DB_PATH"],
+         "--into", str(workspace.work / "backups"), "--keep", "3"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    snapshots = list((workspace.work / "backups").glob("buildboard-*.db"))
+    assert len(snapshots) == 1
+
+    restored = sqlite3.connect(snapshots[0])
+    try:
+        assert restored.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        titles = [row[0] for row in restored.execute("SELECT title FROM builds")]
+        assert "Medieval spawn" in titles
+    finally:
+        restored.close()
+
+
+def test_a_missing_database_is_not_a_backup_failure(workspace):
+    """The timer fires whether or not the bot has ever run."""
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "hosting" / "backup_db.py"),
+         "--db", str(workspace.work / "nothing.db"),
+         "--into", str(workspace.work / "backups")],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    assert "nothing to do" in result.stdout
+
+
+def test_old_snapshots_are_pruned(workspace):
+    """Otherwise a daily backup fills a free-tier disk in a year."""
+    from datetime import date, timedelta
+
+    backups = workspace.work / "backups"
+    backups.mkdir()
+    for days in range(10):
+        stamp = (date(2026, 8, 6) - timedelta(days=days)).isoformat()
+        (backups / f"buildboard-{stamp}.db").write_bytes(b"old")
+
+    sys.path.insert(0, str(ROOT / "hosting"))
+    import backup_db
+
+    dropped = backup_db.prune(backups, keep=7)
+    assert len(dropped) == 3
+    assert len(list(backups.glob("buildboard-*.db"))) == 7

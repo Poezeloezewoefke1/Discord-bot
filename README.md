@@ -87,71 +87,78 @@ what's missing if not.
 Use a dedicated, otherwise-empty channel for the board. The bot keeps one message there and edits
 it in place.
 
-## Hosting it 24/7 on GitHub Actions
+## Hosting it 24/7
 
-The bot can host itself out of this repo — no server of your own. **Read the two trade-offs below
-before you set this up**, because neither is reversible after the fact.
+The bot needs a machine that stays on. It ran on GitHub Actions for a while and that worked — until
+it didn't: Actions stopped handing out runners, the scheduled restarts sat in a queue until they
+were killed, and the bot was down for six hours before anyone noticed. Actions is a build system,
+and a build system asked to be a server eventually behaves like a build system.
 
-### What you're accepting
+So the real host is an ordinary Linux machine, and the workflow in `.github/workflows/bot.yml` is
+now a **manual emergency fallback** with no schedule.
 
-**Your build data becomes public.** State lives in a branch called `bot-data`: the database (build
-descriptions, Discord user IDs) and every schematic anyone uploads. This repo is public, so anyone
-can browse and download all of it. If that's not okay, make the repo private — Actions then bills
-against your 2,000 free minutes/month, which 24/7 running will exhaust in about three days.
+### Where to run it
 
-**GitHub's acceptable-use rules don't cover running a service on Actions.** Actions is for building
-and testing code, and repos have been flagged for using it as free hosting. Nothing here hides the
-usage. If that risk isn't acceptable, run the bot on the machine that already runs your Minecraft
-server instead — the "Run it" steps above are all it takes, and no code changes are needed.
+Anything with systemd that stays on. In rough order of least effort:
+
+| | |
+|---|---|
+| **The box your Minecraft server is on** | Already online, already paid for. The bot needs a few MB of RAM. |
+| **Oracle Cloud Always Free** | A genuinely free VM, no time limit. Sign-up asks for a card to verify and doesn't charge it. |
+| **Google Cloud e2-micro** | Also always-free, US regions only. |
+| **A Raspberry Pi at home** | Free if you own one; as reliable as your internet and power. |
+
+Avoid anything that "sleeps when idle" — Render's and Replit's free tiers do, and a sleeping bot is
+the problem you're trying to solve.
 
 ### Setting it up
 
-1. **Settings → Secrets and variables → Actions → New repository secret**, twice:
-   - `DISCORD_TOKEN` — your bot token
-   - `GUILD_ID` — your server ID
+On a fresh Ubuntu machine, one command:
 
-   Never put the token in a file in this repo. It would be public within seconds of pushing.
-2. **Actions** tab → **Run bot** → **Run workflow**.
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Poezeloezewoefke1/Discord-bot/claude/builder-script-communication-q6ndma/deploy/install.sh)"
+```
 
-That's it. It re-launches itself from then on.
+It asks for the bot token and the server ID, then does the rest: installs Python, clones the repo,
+builds a virtualenv, **restores the existing database from the `bot-data` branch** so nothing is
+lost in the move, and installs the service so the bot starts on boot.
 
-### How it stays up
+Then turn the old workflow off, or two bots answer every command twice:
+**GitHub → Actions → "Run bot" → ⋯ → Disable workflow**.
 
-Actions kills any job at 6 hours, so the bot runs in shifts:
+No inbound ports are needed. The bot only makes outgoing connections, so the firewall can stay shut.
 
-- Each run hosts the bot for **5h30m**, then shuts down gracefully.
-- The workflow is scheduled **hourly**, but those fires **don't start a second bot** — a
-  concurrency group makes each one wait its turn. That means a successor is nearly always parked
-  and ready, so when a shift ends the next starts **within seconds**.
-- Firing hourly is the redundancy: if GitHub skips a scheduled run under load, another is along
-  within the hour rather than the bot being down for a whole shift.
+### Running it
 
-This is what makes it 24/7 — no button-pressing. You can confirm it's self-sustaining by looking for
-runs in the Actions tab whose trigger is **schedule** rather than *workflow_dispatch*.
+```bash
+sudo journalctl -u astra-bot -f          # watch it live
+systemctl status astra-bot               # is it up?
+sudo systemctl restart astra-bot         # restart
+sudo bash /opt/astra-bot/deploy/update.sh  # pull the latest code and restart
+```
 
-**Cancelled runs in the Actions tab are normal.** Each new scheduled fire replaces the previous
-waiting one, and the replaced run shows as cancelled. Only a failed **Run the bot** step means
-something is actually wrong.
+`Restart=always` with `StartLimitIntervalSec=0` means a crash at 4am is back in ten seconds, and
+systemd never gives up trying — the default gives up after five quick restarts, which is exactly the
+case you don't want it to.
 
-Expect a few seconds' gap at each handover, and rarely up to ~2 hours if GitHub drops a schedule.
-During a gap, commands fail with Discord's "application did not respond".
+### Backups
 
-### How your data survives restarts
+The database is a single file, so the risk on a machine that keeps its disk is that the file quietly
+goes bad. A timer takes a dated snapshot daily and keeps the last seven, in `/opt/astra-bot/backups`.
+Snapshots use SQLite's backup API rather than copying the file, so one taken while the bot is
+mid-write is still a valid database, and each is integrity-checked before the old ones are pruned.
 
-Every runner starts with a blank disk, so `hosting/sync_state.py` copies the database and schematics
-to the `bot-data` branch every 5 minutes and once more at shutdown. The next run restores them
-before the bot starts. Worst case — a hard crash — loses the last 5 minutes of activity.
+To restore, stop the bot, copy a snapshot over `buildboard.db`, start it again.
 
-The database is copied with SQLite's backup API rather than a plain file copy, because the bot is
-writing to it at the same time and a naive copy can produce a file that won't open. The branch is
-rewritten as a single commit each time; keeping history would mean re-storing the whole database
-every few minutes forever.
+For an off-machine copy as well, `hosting/sync_state.py save` still pushes everything to the
+`bot-data` branch — it needs `GITHUB_TOKEN` and `GITHUB_REPOSITORY` set. Worth it if losing the VM
+would matter; note the branch is public, so build data and schematics are readable by anyone.
 
-To back up or reset everything, that one branch is all your data.
+### If the machine dies
 
-> GitHub disables scheduled workflows after **60 days without repository activity**. The state
-> commits should keep that timer alive, but if the bot ever goes quiet for a long stretch, check the
-> Actions tab for a "this workflow was disabled" banner and click Enable.
+Start the fallback: **Actions → Run bot → Run workflow**. It picks up the last state pushed to
+`bot-data` and hosts the bot for 5h30m, once. It will not restart itself; run it again if you need
+another shift, and stop it once the real host is back.
 
 ## Commands
 

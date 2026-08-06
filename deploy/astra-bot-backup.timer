@@ -1,0 +1,13 @@
+[Unit]
+Description=Take a database snapshot once a day
+
+[Timer]
+OnCalendar=daily
+; A machine that was off at 03:00 still gets its snapshot when it comes back,
+; rather than silently skipping a day.
+Persistent=true
+; Don't run it at the same instant as every other daily job.
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

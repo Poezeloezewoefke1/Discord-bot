@@ -1,13 +1,16 @@
-# Runs the Discord bot on GitHub Actions.
+# EMERGENCY FALLBACK ONLY. The bot's real home is an always-on machine — see
+# deploy/ and the "Hosting" section of the README.
 #
-# Actions kills any job at 6 hours and wipes the disk between runs, so this
-# workflow works in shifts: each run hosts the bot for 5h30m while syncing its
-# database and schematics to the `bot-data` branch, and the next run is already
-# queued to take over the moment this one ends.
+# This hosted the bot for a while and it worked, until it didn't: Actions stopped
+# handing out runners, scheduled restarts sat queued until they were killed, and
+# the bot was down for six hours. A build system asked to be a server behaves
+# like a build system. Keep this only for the case where the real host is off and
+# somebody needs the bot back right now.
 #
-# Cancelled runs in the Actions tab are NORMAL. Each scheduled fire that arrives
-# while the bot is running becomes the pending successor and cancels the previous
-# pending one. Only failures of the "Run the bot" step mean something is wrong.
+# Actions kills any job at 6 hours and wipes the disk between runs, so a run here
+# hosts the bot for 5h30m and syncs its database to the `bot-data` branch. It
+# will NOT restart itself afterwards — start it again by hand if you still need
+# it, and stop it once the real host is back.
 
 name: Run bot
 
@@ -20,13 +23,13 @@ on:
   # hourly means that costs at most an hour of downtime rather than two. The price
   # is a steady trickle of cancelled runs in the Actions tab — each one is a
   # superseded pending run, which is normal and not a failure.
-  # Twice an hour rather than once: a scheduled fire that GitHub drops, or one
-  # that never gets given a runner, then costs half an hour of downtime instead
-  # of a full one. Both failed on the same afternoon once, and the bot stayed
-  # down for six hours waiting for the next fire.
-  schedule:
-    - cron: '0 * * * *'
-    - cron: '30 * * * *'
+  # Manual only. The bot lives on a machine that stays on (see deploy/) — this
+  # is the emergency fallback for when that machine is down, and nothing more.
+  #
+  # There is deliberately NO schedule any more. A scheduled fire here while the
+  # real host is running would put two bots online at once, and every command
+  # would be answered twice. Starting this is now always a decision somebody
+  # made, which is what you want from a fallback.
   workflow_dispatch:
 
 # At most one bot alive at a time. A run triggered while another is in progress

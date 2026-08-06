@@ -1,0 +1,42 @@
+; systemd unit for the bot on a normal always-on machine.
+;
+; The point of moving off GitHub Actions was to stop the bot dying every few
+; hours, so the two settings that matter here are Restart=always and
+; StartLimitIntervalSec=0: crash at 4am and it is back in ten seconds, forever,
+; without anyone being woken up. systemd's default gives up after five restarts
+; in ten seconds, which is exactly the case you don't want it to give up on.
+
+[Unit]
+Description=ASTRA Smp Events Discord bot
+Documentation=https://github.com/Poezeloezewoefke1/Discord-bot
+; network-online rather than network: the bot opens a websocket to Discord the
+; moment it starts, and "an interface exists" is not the same as "DNS resolves".
+After=network-online.target
+Wants=network-online.target
+; Never stop trying to restart it.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+; __USER__ and __DIR__ are filled in by deploy/install.sh.
+User=__USER__
+WorkingDirectory=__DIR__
+; config.py loads .env from the working directory, so the token lives there and
+; never in this file — unit files are world-readable, .env is chmod 600.
+ExecStart=__DIR__/.venv/bin/python -u bot.py
+Restart=always
+RestartSec=10
+; Unbuffered above, and journald here, so `journalctl -u astra-bot -f` is a live
+; log rather than something that appears in 4KB lumps.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=astra-bot
+
+; Modest hardening. The bot writes only to its own directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target

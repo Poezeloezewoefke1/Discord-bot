@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily snapshot of the ASTRA bot database
+Documentation=https://github.com/Poezeloezewoefke1/Discord-bot
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/.venv/bin/python hosting/backup_db.py --keep 7
+SyslogIdentifier=astra-bot-backup
