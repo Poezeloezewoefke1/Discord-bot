@@ -358,6 +358,98 @@ def test_manual_dispatch_is_still_possible():
 
 
 # --------------------------------------------------------------------------
+# starting on a host that hands the bot a blank folder
+#
+# A panel host just runs `python bot.py` — there is no step before it to fetch
+# the data. A bot that boots empty looks exactly like a brand-new one, and the
+# obvious reaction is to run /setup again, which is how you end up with two sets
+# of everything.
+# --------------------------------------------------------------------------
+
+def _bootstrap():
+    sys.path.insert(0, str(ROOT))
+    from hosting import bootstrap
+
+    return bootstrap
+
+
+def test_a_blank_install_fetches_the_saved_data(workspace, monkeypatch):
+    seed_database(workspace)
+    seed_schematics(workspace)
+    sync("save", workspace)
+
+    db_path = Path(workspace.env["DB_PATH"])
+    schematics = Path(workspace.env["SCHEMATIC_DIR"])
+    db_path.unlink()
+    shutil.rmtree(schematics)
+
+    monkeypatch.setenv("STATE_REMOTE", str(workspace.remote))
+    monkeypatch.delenv("SKIP_STATE_RESTORE", raising=False)
+
+    assert _bootstrap().restore_if_empty(db_path, schematics) is True
+
+    db.set_db_path(db_path)
+    assert db.get_config(GUILD)["builder_role_id"] == 11, "/setup would have to be re-run"
+    assert any(schematics.rglob("*.schem")), "uploaded schematics did not come back"
+
+
+def test_an_existing_database_is_never_overwritten(workspace, monkeypatch):
+    """The file on disk is the truth; the branch is only a backup. Restoring
+    over live data would silently roll the server back."""
+    seed_database(workspace)
+    sync("save", workspace)
+
+    db.set_db_path(Path(workspace.env["DB_PATH"]))
+    fresh = db.create_build(GUILD, "Added after the backup", "spec", SCRIPTER)
+
+    monkeypatch.setenv("STATE_REMOTE", str(workspace.remote))
+    assert _bootstrap().restore_if_empty(
+        Path(workspace.env["DB_PATH"]), Path(workspace.env["SCHEMATIC_DIR"])
+    ) is False
+
+    db.set_db_path(Path(workspace.env["DB_PATH"]))
+    assert db.get_build(fresh) is not None, "a newer build was thrown away"
+
+
+def test_an_unreachable_remote_does_not_stop_the_bot_starting(workspace, monkeypatch, caplog):
+    """Refusing to start would leave a panel host restart-looping forever, which
+    is far harder to work out than an empty bot saying why."""
+    db_path = Path(workspace.env["DB_PATH"])
+    monkeypatch.setenv("STATE_REMOTE", "https://example.invalid/nope/nothing.git")
+
+    with caplog.at_level("WARNING"):
+        assert _bootstrap().restore_if_empty(
+            db_path, Path(workspace.env["SCHEMATIC_DIR"])
+        ) is False
+
+    assert not db_path.exists()
+    assert "empty database" in caplog.text
+    assert "do NOT run /setup again" in caplog.text, "the log must say what not to do"
+
+
+def test_the_fetch_can_be_turned_off(workspace, monkeypatch):
+    monkeypatch.setenv("SKIP_STATE_RESTORE", "1")
+    monkeypatch.setenv("STATE_REMOTE", str(workspace.remote))
+    assert _bootstrap().restore_if_empty(
+        Path(workspace.env["DB_PATH"]), Path(workspace.env["SCHEMATIC_DIR"])
+    ) is False
+
+
+def test_the_default_remote_is_public_so_it_needs_no_token():
+    """The whole point is that it works on a host nobody configured."""
+    remote = _bootstrap().DEFAULT_REMOTE
+    assert remote.startswith("https://github.com/")
+    assert "@" not in remote, "a token in the default URL would be committed to the repo"
+
+
+def test_the_bot_fetches_state_before_touching_the_database():
+    """Ordering matters: init_db() on a missing file creates an empty one, and
+    then the fetch would decline to overwrite it — leaving the server blank."""
+    source = (ROOT / "bot.py").read_text()
+    assert source.index("restore_if_empty") < source.index("db.init_db()")
+
+
+# --------------------------------------------------------------------------
 # the real host
 #
 # A unit file is configuration that only fails at 4am on the night it matters,

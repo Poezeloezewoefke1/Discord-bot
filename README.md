@@ -111,7 +111,43 @@ Anything with systemd that stays on. In rough order of least effort:
 Avoid anything that "sleeps when idle" — Render's and Replit's free tiers do, and a sleeping bot is
 the problem you're trying to solve.
 
-### Setting it up
+### On a bot panel (Pella, Pterodactyl and similar)
+
+A panel gives you a folder and runs one command. Nothing else is needed:
+
+| Setting | Value |
+|---|---|
+| **Start command** | `python bot.py` |
+| **Python** | 3.11 or newer |
+| **Install** | `pip install -r requirements.txt` (most panels do this for you) |
+
+Upload the code — or point the panel at this repo and branch — and set two
+environment variables, either in the panel's variables screen or in a `.env` file
+next to `bot.py`:
+
+```
+DISCORD_TOKEN=your-bot-token
+GUILD_ID=your-server-id
+```
+
+**Your existing data comes across on its own.** The first time the bot starts and
+finds no database, it fetches the saved one from the `bot-data` branch — builds,
+tickets, applications, every setting. No files to copy, no `/setup` to redo. It
+only ever does this when there is no database at all, so it can never overwrite
+anything live, and if it can't reach the branch it says so loudly in the log
+rather than starting up pretending everything is fine.
+
+Two things to check on any panel:
+
+- **Storage has to persist between restarts.** `buildboard.db` and `schematics/`
+  live in the bot's folder. A panel that wipes the folder on restart would send
+  the bot back to the branch copy each time and lose anything since.
+- **Turn the GitHub workflow off** — *Actions → "Run bot" → ⋯ → Disable workflow* —
+  or two bots answer every command twice.
+
+Set `SKIP_STATE_RESTORE=1` if you ever want a genuinely empty start.
+
+### On your own machine (VPS, Oracle Cloud, a Pi)
 
 On a fresh Ubuntu machine, one command:
 

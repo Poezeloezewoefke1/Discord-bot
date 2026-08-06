@@ -16,6 +16,7 @@ import config
 import db
 import embeds
 import service
+from hosting import bootstrap
 from views import DYNAMIC_ITEMS
 
 logging.basicConfig(
@@ -52,6 +53,12 @@ class BuildBoardBot(commands.Bot):
         self.started_at = discord.utils.utcnow()
 
     async def setup_hook(self) -> None:
+        # Hosts that hand the bot a blank folder (a panel, a fresh container)
+        # would otherwise start it as if the server had never been set up. Only
+        # runs when there is no database at all, so it can never overwrite
+        # anything live.
+        bootstrap.restore_if_empty(config.DB_PATH, config.SCHEMATIC_DIR)
+
         db.init_db()
         config.SCHEMATIC_DIR.mkdir(parents=True, exist_ok=True)
 
