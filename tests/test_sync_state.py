@@ -326,6 +326,21 @@ def _triggers(workflow) -> dict:
     return workflow.get("on") or workflow.get(True) or {}
 
 
+def test_a_normal_shift_end_is_not_reported_as_a_failure():
+    """`timeout --signal=INT` ends most shifts with 130, not 124. Reporting that
+    as a failure paints every healthy handover red, and real failures then have
+    nowhere to stand out — which is exactly how six hours of downtime went
+    unnoticed once."""
+    workflow = _workflow("bot.yml")
+    script = "\n".join(
+        step["run"] for step in workflow["jobs"]["run"]["steps"]
+        if isinstance(step.get("run"), str)
+    )
+    assert "130" in script, "SIGINT's exit code is not treated as a clean shift end"
+    for code in ("0", "124", "130"):
+        assert code in script, f"exit {code} is not handled"
+
+
 def test_the_schedule_fires_at_least_hourly():
     """The cron is the only thing that starts a successor, so a long gap between
     fires is a long gap in uptime whenever GitHub drops one."""

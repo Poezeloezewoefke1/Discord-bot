@@ -20,8 +20,13 @@ on:
   # hourly means that costs at most an hour of downtime rather than two. The price
   # is a steady trickle of cancelled runs in the Actions tab — each one is a
   # superseded pending run, which is normal and not a failure.
+  # Twice an hour rather than once: a scheduled fire that GitHub drops, or one
+  # that never gets given a runner, then costs half an hour of downtime instead
+  # of a full one. Both failed on the same afternoon once, and the bot stayed
+  # down for six hours waiting for the next fire.
   schedule:
     - cron: '0 * * * *'
+    - cron: '30 * * * *'
   workflow_dispatch:
 
 # At most one bot alive at a time. A run triggered while another is in progress
@@ -106,11 +111,21 @@ jobs:
           rm -f "$FLAG"
           wait "$SAVER" 2>/dev/null || true
 
-          # 124 is `timeout` reporting it ended the shift — the expected outcome.
-          if [ "$CODE" -eq 124 ]; then
-            echo "Shift finished after 5h30m; the queued run takes over now."
-            exit 0
-          fi
+          # Three ways a normal shift ends, all of them fine:
+          #   0    the bot handled SIGINT and exited cleanly
+          #   124  `timeout` reporting it ended the shift
+          #   130  the bot died *of* the SIGINT (128 + 2), which is what actually
+          #        happens most shifts — and it was being reported as a failure,
+          #        so every healthy handover showed up red. Twelve hours of real
+          #        downtime once hid in that noise, because a tab full of red
+          #        failures tells you nothing at all.
+          case "$CODE" in
+            0|124|130)
+              echo "Shift finished after 5h30m (exit $CODE); the queued run takes over now."
+              exit 0
+              ;;
+          esac
+          echo "::error::The bot exited with $CODE — this is a real failure, not the shift ending."
           exit "$CODE"
 
       - name: Save state
