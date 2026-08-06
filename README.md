@@ -513,9 +513,28 @@ and accepting hands out the role.
 /apply-setup review_channel:#staff-applications panel_channel:#apply reviewer_role:@Staff
 ```
 
-That creates five positions to start with, with questions written for a Minecraft server. Builder
-and Script writer are wired to the roles `/setup` already knows about, so you aren't asked for them
-twice; give the others a role with `/apply-form`.
+That creates five positions to start with, with questions written for a Minecraft server, and
+**works out which of your roles each one hands out** by reading the server's role list. Builder and
+Script writer come from `/setup`, which was already told them; the rest are matched on name.
+
+The matching is deliberately cautious about two things:
+
+- **It never guesses a role with Administrator or Manage Server**, however well the name matches.
+  Those are the whole server, and a name is thin evidence.
+- **Shortest match wins.** *Script Writer* is a substring of *Lead Script Writer*, so a careless
+  match would promote every applicant on their first day.
+
+The staff position looks for *Trainee staff*, *trial staff* or *helper* — deliberately **not**
+*staff*, *moderator* or *admin*. Somebody accepted for a helper role should land on the bottom rung.
+
+`/apply-setup` prints what it matched so you can check it at a glance, and flags any role that has
+moderator powers or that the bot can't hand out. If one is wrong:
+
+```
+/apply-form label:Video editor role:@Editors
+```
+
+A role you set by hand is never replaced by a later guess.
 
 ```
 📥 Applications

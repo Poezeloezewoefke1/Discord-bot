@@ -388,11 +388,17 @@ class ApplicationsCog(commands.Cog):
         extra = ""
         if seeded:
             extra = (
-                f"\n\n📄 Added **{'**, **'.join(seeded)}**. "
-                "Change the questions or the role with `/apply-form`, and use "
-                "`/apply-toggle` to close one.\n"
+                f"\n\n📄 Added **{'**, **'.join(seeded)}**.\n"
                 "*(Re-running this adds back any of the standard positions you've deleted — "
                 "`/apply-form-delete` them again if you don't want them.)*"
+            )
+
+        report = self.role_report(interaction.guild)
+        if report:
+            extra += (
+                "\n\n**Roles handed out when somebody is accepted** — I matched these to your "
+                "server's roles, so **check them**:\n" + report +
+                "\n\nWrong one? `/apply-form label:<position> role:@TheRightRole`"
             )
         cfg = db.get_config(interaction.guild.id)
         if cfg["applications_channel_id"] and cfg["applications_channel_id"] != panel_channel.id:
@@ -420,13 +426,25 @@ class ApplicationsCog(commands.Cog):
         Not "only on an empty server": positions get added to the list over
         time, and a server that ran setup last month should pick those up by
         re-running it rather than typing five questions by hand. Existing
-        positions are left completely alone, so nobody's edits get overwritten.
+        positions keep their questions, their blurb and any role an admin set
+        by hand — the one thing that gets filled in is a role that was never
+        set, since a position that hands out nothing is the common complaint.
         """
-        existing = {form["key"] for form in db.list_forms(guild.id)}
+        existing = {form["key"]: form for form in db.list_forms(guild.id)}
         added = []
+
         for form in apply_lib.DEFAULT_FORMS:
-            if form["key"] in existing:
+            current = existing.get(form["key"])
+            if current is not None:
+                if not current["role_id"]:
+                    guess = self._guess_role(guild, form["key"])
+                    if guess:
+                        db.save_form(
+                            guild.id, current["key"], current["label"], current["questions"],
+                            emoji=current["emoji"], blurb=current["blurb"], role_id=guess,
+                        )
                 continue
+
             db.save_form(
                 guild.id,
                 form["key"],
@@ -439,20 +457,61 @@ class ApplicationsCog(commands.Cog):
             added.append(form["label"])
         return added
 
-    def _guess_role(self, guild: discord.Guild, key: str) -> int | None:
-        """Wire the default positions to roles this bot already knows about.
+    # Permissions that must never be handed out because a role *name* looked
+    # right. Moderation permissions are fine to match — a helper role having
+    # kick is normal — but these two are the whole server.
+    UNGUESSABLE = ("administrator", "manage_guild")
 
-        /setup has already been told which role builders and script writers have,
-        so asking again would be asking twice for the same fact.
+    def _guess_role(self, guild: discord.Guild, key: str) -> int | None:
+        """Wire a position to a role that already exists on the server.
+
+        /setup has already been told which role builders and script writers
+        have, so that answer wins outright — asking again would be asking twice
+        for the same fact. Everything else is matched on the role's name.
         """
         cfg = db.get_config(guild.id)
-        if cfg is None:
-            return None
-        if key == apply_lib.KEY_BUILDER:
-            return cfg["builder_role_id"]
-        if key == apply_lib.KEY_SCRIPTER:
-            return cfg["scripter_role_id"]
-        return None
+        if cfg is not None:
+            if key == apply_lib.KEY_BUILDER and cfg["builder_role_id"]:
+                return cfg["builder_role_id"]
+            if key == apply_lib.KEY_SCRIPTER and cfg["scripter_role_id"]:
+                return cfg["scripter_role_id"]
+
+        roles = [
+            (
+                role.id,
+                role.name,
+                not role.is_default()
+                and not role.managed
+                and not any(getattr(role.permissions, p, False) for p in self.UNGUESSABLE),
+            )
+            for role in getattr(guild, "roles", ())
+        ]
+        return apply_lib.guess_role_id(key, roles)
+
+    def role_report(self, guild: discord.Guild) -> str:
+        """Which role each position hands out — the line that makes a wrong
+        guess obvious now rather than when somebody is accepted."""
+        lines = []
+        for form in db.list_forms(guild.id):
+            if not form["role_id"]:
+                lines.append(f"• **{form['label']}** → *no role* — set one with `/apply-form`")
+                continue
+
+            role = guild.get_role(form["role_id"])
+            if role is None:
+                lines.append(f"• **{form['label']}** → ⚠️ role was deleted")
+                continue
+
+            note = ""
+            if service.missing_role_permissions(guild, role):
+                note = " — ⚠️ I can't hand this out yet, see `/test`"
+            elif any(
+                getattr(role.permissions, p, False)
+                for p in ("ban_members", "kick_members", "manage_messages", "manage_roles")
+            ):
+                note = " — ⚠️ this role has moderator powers"
+            lines.append(f"• **{form['label']}** → {role.mention}{note}")
+        return "\n".join(lines)
 
     @app_commands.command(name="apply-panel", description="Post the applications panel again")
     @app_commands.describe(channel="Post it somewhere else than the configured channel")

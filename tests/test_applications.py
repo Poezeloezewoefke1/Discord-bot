@@ -243,6 +243,143 @@ def test_no_position_asks_the_same_thing_twice():
         assert len(labels) == len(set(labels)), f"{form['label']} repeats a question"
 
 
+# --------------------------------------------------------------------------
+# matching positions to roles that already exist
+#
+# Taken from the real server's role list, in its real order. A position that
+# hands out nothing is the complaint; a position that hands out the wrong thing
+# is the accident.
+# --------------------------------------------------------------------------
+
+ASTRA_ROLES = [
+    "Owner", "Pov", "Admin", "Moderator", "Trainee staff",
+    "Lead Script Writer", "Script Writer", "Builder", "Promotors", "Editors",
+    "Trusted+", "Trusted", "accepted", "Member",
+    "Pyro Fan", "Micro Fan", "Brother of Microman_J", "Dutch",
+]
+
+
+def astra(assignable=None):
+    """(id, name, assignable) triples, ids being the position in the list."""
+    blocked = set(assignable or ["Owner", "Admin"])  # these hold administrator
+    return [
+        (index, name, name not in blocked) for index, name in enumerate(ASTRA_ROLES, start=1)
+    ]
+
+
+def role_named(name):
+    return ASTRA_ROLES.index(name) + 1
+
+
+@pytest.mark.parametrize(
+    "key,expected",
+    [
+        (apply_lib.KEY_BUILDER, "Builder"),
+        (apply_lib.KEY_SCRIPTER, "Script Writer"),
+        (apply_lib.KEY_STAFF, "Trainee staff"),
+        (apply_lib.KEY_EDITOR, "Editors"),
+        (apply_lib.KEY_PROMOTOR, "Promotors"),
+    ],
+)
+def test_each_position_finds_the_right_role_on_the_real_server(key, expected):
+    assert apply_lib.guess_role_id(key, astra()) == role_named(expected)
+
+
+def test_a_new_script_writer_does_not_get_the_lead_role():
+    """"Script Writer" is inside "Lead Script Writer", so a careless substring
+    match promotes every applicant on day one."""
+    assert apply_lib.guess_role_id(apply_lib.KEY_SCRIPTER, astra()) == role_named("Script Writer")
+
+
+def test_a_staff_applicant_does_not_land_on_moderator_or_admin():
+    picked = apply_lib.guess_role_id(apply_lib.KEY_STAFF, astra())
+    assert picked not in (role_named("Moderator"), role_named("Admin"), role_named("Owner"))
+    assert picked == role_named("Trainee staff")
+
+
+def test_a_role_that_runs_the_server_is_never_guessed():
+    """However well the name matches. An admin naming it explicitly is a
+    different thing and doesn't come through here."""
+    roles = [(1, "Builder", False), (2, "Builders", False)]
+    assert apply_lib.guess_role_id(apply_lib.KEY_BUILDER, roles) is None
+
+
+def test_decorated_role_names_still_match():
+    roles = [(7, "『🔨』 Builder ✦", True), (8, "Member", True)]
+    assert apply_lib.guess_role_id(apply_lib.KEY_BUILDER, roles) == 7
+
+
+def test_plural_and_singular_both_match():
+    for name in ("Editor", "Editors", "Video Editor", "video editors"):
+        assert apply_lib.guess_role_id(apply_lib.KEY_EDITOR, [(3, name, True)]) == 3
+    for name in ("Promotor", "Promotors", "Promoter", "Promoters"):
+        assert apply_lib.guess_role_id(apply_lib.KEY_PROMOTOR, [(4, name, True)]) == 4
+
+
+def test_a_server_with_no_matching_role_gets_nothing_rather_than_something_wrong():
+    roles = [(1, "Member", True), (2, "Dutch", True), (3, "Trusted", True)]
+    for key in (apply_lib.KEY_EDITOR, apply_lib.KEY_PROMOTOR, apply_lib.KEY_STAFF):
+        assert apply_lib.guess_role_id(key, roles) is None
+
+
+def test_a_role_set_by_hand_is_never_replaced_by_a_guess():
+    """Re-running setup must not undo a deliberate choice."""
+    from cogs.applications import ApplicationsCog
+
+    class Role:
+        def __init__(self, role_id, name):
+            self.id, self.name = role_id, name
+            self.managed = False
+            self.permissions = type("P", (), {"administrator": False, "manage_guild": False})()
+
+        def is_default(self):
+            return False
+
+    class Guild:
+        id = GUILD
+        roles = [Role(role_named(n), n) for n in ASTRA_ROLES]
+
+        def get_role(self, role_id):
+            return None
+
+    a_form(key=apply_lib.KEY_STAFF, label="Staff / helper", role_id=12345)
+    ApplicationsCog(None).seed_default_forms(Guild())
+
+    assert db.get_form(GUILD, apply_lib.KEY_STAFF)["role_id"] == 12345
+
+
+def test_a_position_with_no_role_gets_one_filled_in_on_the_next_setup():
+    """The actual complaint: positions created before this existed hand out
+    nothing, and nobody wants to retype five questions to fix that."""
+    from cogs.applications import ApplicationsCog
+
+    class Role:
+        def __init__(self, role_id, name):
+            self.id, self.name = role_id, name
+            self.managed = False
+            self.permissions = type("P", (), {"administrator": False, "manage_guild": False})()
+
+        def is_default(self):
+            return False
+
+    class Guild:
+        id = GUILD
+        roles = [Role(role_named(n), n) for n in ASTRA_ROLES]
+
+        def get_role(self, role_id):
+            return None
+
+    a_form(key=apply_lib.KEY_STAFF, label="Staff / helper", role_id=None,
+           questions=["A question I wrote myself"])
+    ApplicationsCog(None).seed_default_forms(Guild())
+
+    form = db.get_form(GUILD, apply_lib.KEY_STAFF)
+    assert form["role_id"] == role_named("Trainee staff")
+    assert apply_lib.questions_from_json(form["questions"]) == apply_lib.normalise_questions(
+        ["A question I wrote myself"]
+    ), "filling in the role must not overwrite the questions"
+
+
 def test_default_keys_are_unique():
     """Two positions sharing a key would leave one of them unreachable from the
     panel, since the key is what the button carries."""

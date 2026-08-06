@@ -438,6 +438,65 @@ def status_face(status: str) -> tuple[str, str]:
     }.get(status, ("•", status))
 
 
+# --------------------------------------------------------------------------
+# matching a position to a role that already exists on the server
+# --------------------------------------------------------------------------
+
+# Names to look for, best first. Servers name these roles differently, and
+# asking an admin to type five role names when the roles are sitting right there
+# is asking them to do the bot's job.
+#
+# Note what is deliberately *absent* from the staff list: "staff", "moderator"
+# and "admin". Somebody accepted for a helper position should land on the
+# bottom rung, not on whatever role happens to contain the word staff.
+ROLE_HINTS = {
+    KEY_BUILDER: ("builder", "builders", "build team"),
+    KEY_SCRIPTER: ("script writer", "script writers", "scriptwriter", "scripter", "scripters"),
+    KEY_STAFF: ("trainee staff", "trainee", "trial staff", "helper", "helpers", "trainee mod"),
+    KEY_EDITOR: ("editor", "editors", "video editor", "video editors", "edit team"),
+    KEY_PROMOTOR: ("promotor", "promotors", "promoter", "promoters", "promo team"),
+}
+
+
+def normalise_role_name(name: str) -> str:
+    """Role names are full of decoration — 『🔨』Builder, ・Builder・, ✦ Builder ✦."""
+    stripped = re.sub(r"[^a-z0-9 ]+", " ", (name or "").lower())
+    return re.sub(r"\s+", " ", stripped).strip()
+
+
+def guess_role_id(key: str, roles) -> int | None:
+    """Which existing role a position should hand out, or None if nothing fits.
+
+    `roles` is a sequence of (id, name, assignable) — assignable is False for
+    roles that must never be handed out from a *guess*, however well the name
+    matches. An admin naming a role explicitly is a different thing entirely and
+    doesn't come through here.
+    """
+    candidates = [
+        (role_id, normalise_role_name(name))
+        for role_id, name, assignable in roles
+        if assignable and normalise_role_name(name)
+    ]
+
+    hints = ROLE_HINTS.get(key, ())
+    for hint in hints:
+        for role_id, name in candidates:
+            if name == hint:
+                return role_id
+
+    # Nothing matched exactly. Fall back to a name that contains a hint, shortest
+    # first — otherwise "Script Writer" loses to "Lead Script Writer", and
+    # handing a new applicant the lead role is a worse mistake than no role.
+    for hint in hints:
+        matches = sorted(
+            ((role_id, name) for role_id, name in candidates if hint in name),
+            key=lambda pair: len(pair[1]),
+        )
+        if matches:
+            return matches[0][0]
+    return None
+
+
 def looks_like_emoji(value: str | None) -> bool:
     """Whether this is safe to hand to Discord as a button emoji.
 
