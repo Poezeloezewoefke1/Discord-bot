@@ -624,6 +624,88 @@ def test_the_review_message_can_be_found_again_after_a_restart():
 # emoji, which admins type by hand
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# an emoji typed into the name
+#
+# "/apply-form label:🎬 Video editor" is the obvious thing to type, and without
+# splitting it the emoji lands in the button's icon *and* its text, so the panel
+# draws every emoji twice.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "typed,label,emoji",
+    [
+        ("🎬 Video editor", "Video editor", "🎬"),
+        ("📣 Promotor", "Promotor", "📣"),
+        ("🛡️Staff / helper", "Staff / helper", "🛡️"),   # no space after it
+        ("  📜  Script writer  ", "Script writer", "📜"),
+        ("<:astra:123456789012345678> Helper", "Helper", "<:astra:123456789012345678>"),
+    ],
+)
+def test_an_emoji_at_the_front_of_a_name_becomes_the_icon(typed, label, emoji):
+    assert apply_lib.split_label_emoji(typed) == (label, emoji)
+
+
+@pytest.mark.parametrize("typed", ["Builder", "Événement", "ëxtra werk", "Staff / helper 🛡️"])
+def test_names_without_a_leading_emoji_are_left_alone(typed):
+    """Accented first letters are common in Dutch and French and must survive."""
+    assert apply_lib.split_label_emoji(typed) == (typed, None)
+
+
+def test_a_name_that_is_only_an_emoji_keeps_it():
+    assert apply_lib.split_label_emoji("🔨") == ("🔨", None)
+
+
+def test_splitting_does_not_change_which_position_is_being_edited():
+    """The key comes from the name — if the emoji shifted it, editing a position
+    would create a second one instead."""
+    assert apply_lib.slug("🎬 Video editor") == apply_lib.slug("Video editor")
+
+
+def test_a_position_stored_with_the_emoji_in_its_name_is_repaired():
+    from cogs.applications import ApplicationsCog
+
+    db.save_form(GUILD, "video-editor", "🎬 Video editor",
+                 apply_lib.questions_to_json(["A question"]), emoji="🎬", role_id=77)
+
+    assert ApplicationsCog(None).tidy_forms(GUILD) == 1
+
+    form = db.get_form(GUILD, "video-editor")
+    assert form["label"] == "Video editor"
+    assert form["emoji"] == "🎬"
+    assert form["role_id"] == 77, "repairing the name must not drop the role"
+    assert len(apply_lib.questions_from_json(form["questions"])) == 1
+
+
+def test_repairing_is_a_no_op_the_second_time():
+    from cogs.applications import ApplicationsCog
+
+    db.save_form(GUILD, "video-editor", "🎬 Video editor",
+                 apply_lib.questions_to_json(["A question"]), emoji="🎬")
+    cog = ApplicationsCog(None)
+    cog.tidy_forms(GUILD)
+    assert cog.tidy_forms(GUILD) == 0
+
+
+def test_a_position_with_no_emoji_set_takes_the_one_from_its_name():
+    from cogs.applications import ApplicationsCog
+
+    db.save_form(GUILD, "promotor", "📣 Promotor",
+                 apply_lib.questions_to_json(["A question"]), emoji=None)
+    ApplicationsCog(None).tidy_forms(GUILD)
+
+    form = db.get_form(GUILD, "promotor")
+    assert (form["label"], form["emoji"]) == ("Promotor", "📣")
+
+
+def test_no_default_position_has_its_emoji_in_its_name():
+    for form in apply_lib.DEFAULT_FORMS:
+        label, found = apply_lib.split_label_emoji(form["label"])
+        assert found is None and label == form["label"], (
+            f"{form['label']} would draw its emoji twice"
+        )
+
+
 @pytest.mark.parametrize("value", ["🔨", "📜", "<:astra:123456789012345678>", "<a:spin:1234567890>"])
 def test_real_emoji_are_accepted(value):
     assert apply_lib.looks_like_emoji(value) is True

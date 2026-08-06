@@ -497,6 +497,41 @@ def guess_role_id(key: str, roles) -> int | None:
     return None
 
 
+# A leading emoji on a label: a custom `<:name:id>`, or a run of characters from
+# the emoji blocks (including variation selectors, zero-width joiners and skin
+# tones, which are what make one emoji several codepoints).
+#
+# Latin letters and accented ones are deliberately outside every range here, so
+# a Dutch or French position name keeps its first letter.
+LEADING_EMOJI = re.compile(
+    r"^\s*("
+    r"<a?:[A-Za-z0-9_]+:\d+>"
+    r"|[\U0001F000-\U0001FAFF←-⇿⌀-⏿①-➿"
+    r"⬀-⯿️‍⃣]+"
+    r")\s*"
+)
+
+
+def split_label_emoji(label: str) -> tuple[str, str | None]:
+    """`"🎬 Video editor"` → `("Video editor", "🎬")`.
+
+    Typing the emoji into the name is the obvious thing to do, and without this
+    it ends up in both the button's icon *and* its text, so the panel shows
+    every emoji twice. Returns the label unchanged when it doesn't start with
+    one, and never returns an empty label.
+    """
+    text = (label or "").strip()
+    match = LEADING_EMOJI.match(text)
+    if not match:
+        return text, None
+
+    rest = text[match.end():].strip()
+    if not rest:
+        return text, None  # the name is *only* an emoji; leave it be
+
+    return rest, match.group(1).strip()
+
+
 def looks_like_emoji(value: str | None) -> bool:
     """Whether this is safe to hand to Discord as a button emoji.
 

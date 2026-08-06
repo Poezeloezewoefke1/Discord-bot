@@ -316,7 +316,30 @@ class ApplicationsCog(commands.Cog):
     # panel
     # ----------------------------------------------------------------------
 
+    def tidy_forms(self, guild_id: int) -> int:
+        """Move an emoji out of a position's name and into its icon.
+
+        Rows saved before /apply-form knew to split them have the emoji in both,
+        which draws it twice on the button. Doing this whenever the panel is
+        drawn means the fix lands the moment somebody reposts it, without anyone
+        being told to go and edit five positions by hand.
+        """
+        fixed = 0
+        for form in db.list_forms(guild_id):
+            label, label_emoji = apply_lib.split_label_emoji(form["label"])
+            if label == form["label"]:
+                continue
+            db.save_form(
+                guild_id, form["key"], label, form["questions"],
+                emoji=form["emoji"] or label_emoji,
+                blurb=form["blurb"],
+                role_id=form["role_id"],
+            )
+            fixed += 1
+        return fixed
+
     async def post_panel(self, guild: discord.Guild, channel: discord.TextChannel) -> str:
+        self.tidy_forms(guild.id)
         forms = db.list_forms(guild.id)
         try:
             message = await channel.send(
@@ -580,6 +603,12 @@ class ApplicationsCog(commands.Cog):
         question4: str | None = None,
         question5: str | None = None,
     ) -> None:
+        # "🎬 Video editor" means the emoji to be the button's icon, not part of
+        # its text — otherwise it shows up twice, once as the icon and once in
+        # the label.
+        label, label_emoji = apply_lib.split_label_emoji(label)
+        emoji = emoji or label_emoji
+
         key = apply_lib.slug(label)
         existing = db.get_form(interaction.guild.id, key)
 
