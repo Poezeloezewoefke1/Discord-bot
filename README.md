@@ -118,7 +118,7 @@ A panel gives you a folder and runs one command. Nothing else is needed:
 | Setting | Value |
 |---|---|
 | **Repository** | this repo |
-| **Branch** | `claude/builder-script-communication-q6ndma` — **not** `bot-data` |
+| **Branch** | `main` — **not** `bot-data` |
 | **Runtime** | Python 3.11 or newer |
 | **Start command** | `python main.py` (`python bot.py` works too) |
 | **Install** | `pip install -r requirements.txt` (most panels do this for you) |
@@ -159,7 +159,7 @@ Set `SKIP_STATE_RESTORE=1` if you ever want a genuinely empty start.
 On a fresh Ubuntu machine, one command:
 
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Poezeloezewoefke1/Discord-bot/claude/builder-script-communication-q6ndma/deploy/install.sh)"
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Poezeloezewoefke1/Discord-bot/main/deploy/install.sh)"
 ```
 
 It asks for the bot token and the server ID, then does the rest: installs Python, clones the repo,

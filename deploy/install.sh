@@ -6,14 +6,14 @@
 # Safe to run more than once: it updates in place rather than starting over, so
 # it doubles as the "I changed something, apply it" script.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Poezeloezewoefke1/Discord-bot/claude/builder-script-communication-q6ndma/deploy/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Poezeloezewoefke1/Discord-bot/main/deploy/install.sh | bash
 #
 # or, from a clone:   sudo -v && bash deploy/install.sh
 
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/Poezeloezewoefke1/Discord-bot.git}"
-BRANCH="${BRANCH:-claude/builder-script-communication-q6ndma}"
+BRANCH="${BRANCH:-main}"
 DIR="${DIR:-/opt/astra-bot}"
 SERVICE="astra-bot"
 RUN_USER="${SUDO_USER:-$USER}"
