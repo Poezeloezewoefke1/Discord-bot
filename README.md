@@ -154,6 +154,26 @@ Two things to check on any panel:
 
 Set `SKIP_STATE_RESTORE=1` if you ever want a genuinely empty start.
 
+#### Panels with no GitHub option
+
+Some panels (bot-hosting.net among them) only give you a file manager and a start
+command — there is no repo field to fill in. Put the fetch in the start command
+instead, and every restart picks up the newest code:
+
+```sh
+cd /home/container && git init -q && { git remote add origin https://github.com/Poezeloezewoefke1/Discord-bot.git 2>/dev/null || git remote set-url origin https://github.com/Poezeloezewoefke1/Discord-bot.git; } && git fetch -q --depth 1 origin main && git reset -q --hard FETCH_HEAD && if [ -f requirements.txt ]; then pip install --disable-pip-version-check -U --prefix .local -r requirements.txt; fi && python3 -u ${STARTUP_FILE}
+```
+
+Two things worth knowing about it:
+
+- `git reset --hard` only touches files git tracks, so `buildboard.db`,
+  `schematics/` and `.env` are left alone. The flip side is that edits made in
+  the panel's file manager are undone on the next restart.
+- It has to be idempotent, because it runs on *every* start rather than once.
+  `git init` on an existing repo is harmless, but `git remote add` is not — it
+  exits non-zero when the remote is already there, which takes the whole chain
+  down with it. Hence the `||` fallback to `set-url`.
+
 ### On your own machine (VPS, Oracle Cloud, a Pi)
 
 On a fresh Ubuntu machine, one command:
