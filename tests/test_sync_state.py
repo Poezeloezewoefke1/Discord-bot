@@ -435,6 +435,41 @@ def test_the_fetch_can_be_turned_off(workspace, monkeypatch):
     ) is False
 
 
+def _start(entry: str) -> subprocess.CompletedProcess:
+    """Actually start the bot, with no token so it stops at the first check.
+
+    Cheap, and it imports every cog, view and helper on the way — so a typo
+    anywhere fails here rather than on the host at 2am.
+    """
+    return subprocess.run(
+        [sys.executable, entry],
+        cwd=ROOT,
+        env={**os.environ, "DISCORD_TOKEN": "", "SKIP_STATE_RESTORE": "1"},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+@pytest.mark.parametrize("entry", ["main.py", "bot.py"])
+def test_both_entry_points_start_the_same_bot(entry):
+    """Panels differ on which file they run — Pella defaults to main.py, the
+    workflow uses bot.py. Neither may be the one that quietly rots."""
+    result = _start(entry)
+    assert "No DISCORD_TOKEN found" in (result.stdout + result.stderr), (
+        f"{entry} did not get as far as the token check:\n{result.stdout}\n{result.stderr}"
+    )
+    assert result.returncode == 1
+
+
+def test_main_says_what_to_do_when_packages_are_missing():
+    """A panel gives you a log window. A bare ModuleNotFoundError traceback is a
+    poor way to be told the install step didn't run."""
+    source = (ROOT / "main.py").read_text()
+    assert "pip install -r requirements.txt" in source
+    assert "audioop" in source, "the 3.13 failure needs naming — it's the likely one"
+
+
 def test_the_bot_can_be_installed_on_a_modern_python():
     """discord.py does `import audioop` at import time and audioop was removed
     from the standard library in 3.13 — so on a host offering 3.13 or 3.14 the

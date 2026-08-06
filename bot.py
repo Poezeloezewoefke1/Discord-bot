@@ -166,8 +166,17 @@ async def main() -> None:
         )
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """Start the bot and block until it stops.
+
+    Both entry points call this — `python bot.py` and `python main.py` — so the
+    shutdown handling can't drift between them.
+    """
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         log.info("shutting down")
+
+
+if __name__ == "__main__":
+    run()

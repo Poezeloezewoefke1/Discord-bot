@@ -120,7 +120,7 @@ A panel gives you a folder and runs one command. Nothing else is needed:
 | **Repository** | this repo |
 | **Branch** | `claude/builder-script-communication-q6ndma` — **not** `bot-data` |
 | **Runtime** | Python 3.11 or newer |
-| **Start command** | `python bot.py` |
+| **Start command** | `python main.py` (`python bot.py` works too) |
 | **Install** | `pip install -r requirements.txt` (most panels do this for you) |
 
 > **`bot-data` is not the code branch.** It holds the database and schematics and
