@@ -183,12 +183,23 @@ class HealthCog(commands.Cog):
                     problems += 1
 
             if cfg["honeypot_channel_id"]:
+                from cogs.security import honeypot_action, missing_action_permission
+
                 line, ok = self._channel_check(
                     guild, cfg["honeypot_channel_id"], "Honeypot",
                     ("read_messages",),
                 )
-                protection.append(line)
+                trap_action = honeypot_action(cfg)
+                protection.append(f"{line} → **{trap_action}**")
                 problems += not ok
+
+                if not watch_only(cfg):
+                    blocker = missing_action_permission(guild, trap_action)
+                    if blocker:
+                        protection.append(
+                            f"{BAD} …but I can't {trap_action}: {blocker.split(chr(10))[0]}"
+                        )
+                        problems += 1
             else:
                 protection.append(f"{INFO} Honeypot: *none*")
 
@@ -284,6 +295,52 @@ class HealthCog(commands.Cog):
                     when = f"<t:{ts}:R>" if ts else "never"
                     uploads.append(f"{OK} {creator['name']} — checked {when}")
 
+        # --- applications -----------------------------------------------
+        applying = []
+        if cfg is None or not cfg["apply_review_channel_id"]:
+            applying.append(f"{INFO} Off — set up with `/apply-setup`")
+        else:
+            line, ok = self._channel_check(
+                guild, cfg["apply_review_channel_id"], "Review channel",
+                ("send_messages", "embed_links"),
+            )
+            applying.append(line)
+            problems += not ok
+
+            if not guild.me.guild_permissions.manage_roles:
+                applying.append(f"{BAD} I lack **Manage Roles** — accepting won't hand out a role")
+                problems += 1
+
+            forms = db.list_forms(guild.id)
+            if not forms:
+                applying.append(f"{WARN} No positions — add one with `/apply-form`")
+            for form in forms:
+                state = "open" if form["is_open"] else "closed"
+                if not form["role_id"]:
+                    applying.append(f"{INFO} {form['label']} — {state}, no role given on accept")
+                    continue
+                role = guild.get_role(form["role_id"])
+                if role is None:
+                    applying.append(f"{BAD} {form['label']} — its role was deleted")
+                    problems += 1
+                    continue
+                blocker = service.missing_role_permissions(guild, role)
+                if blocker:
+                    applying.append(
+                        f"{BAD} {form['label']} — can't give {role.mention}: "
+                        f"{blocker.split(chr(10))[0]}"
+                    )
+                    problems += 1
+                else:
+                    applying.append(f"{OK} {form['label']} — {state} · {role.mention}")
+
+            counts = db.count_applications(guild.id)
+            applying.append(
+                f"{INFO} {counts.get(db.APPLY_PENDING, 0)} waiting · "
+                f"{counts.get(db.APPLY_ACCEPTED, 0)} accepted · "
+                f"{counts.get(db.APPLY_DENIED, 0)} not accepted"
+            )
+
         # --- data -------------------------------------------------------
         try:
             counts = {
@@ -314,6 +371,7 @@ class HealthCog(commands.Cog):
         embed.add_field(name="Protection", value="\n".join(protection)[:1024], inline=False)
         embed.add_field(name="Tickets", value="\n".join(ticketing)[:1024], inline=False)
         embed.add_field(name="Upload alerts", value="\n".join(uploads)[:1024], inline=False)
+        embed.add_field(name="Applications", value="\n".join(applying)[:1024], inline=False)
         embed.add_field(name="Data", value="\n".join(data)[:1024], inline=False)
         embed.set_footer(text="Only you can see this")
 

@@ -308,6 +308,78 @@ def test_the_rate_limit_is_per_guild():
 
 
 # --------------------------------------------------------------------------
+# the honeypot's action is its own
+#
+# It fires on a single message with no second signal, so being wrong means a
+# curious member removed. A kick can be undone by inviting them back; a ban
+# can't, practically speaking, on a server this size.
+# --------------------------------------------------------------------------
+
+def test_the_honeypot_kicks_by_default_even_when_everything_else_bans():
+    import security
+    from cogs.security import honeypot_action
+
+    cfg = {"security_action": security.ACTION_BAN, "honeypot_action": None}
+    assert honeypot_action(cfg) == security.ACTION_KICK
+    assert security.HONEYPOT_DEFAULT_ACTION == security.ACTION_KICK
+
+
+def test_an_unconfigured_guild_still_only_kicks():
+    from cogs.security import honeypot_action
+
+    import security
+
+    assert honeypot_action(None) == security.ACTION_KICK
+
+
+def test_staff_can_still_choose_a_ban_deliberately():
+    import security
+    from cogs.security import honeypot_action
+
+    assert honeypot_action({"honeypot_action": security.ACTION_BAN}) == security.ACTION_BAN
+
+
+def test_the_pinned_warning_names_what_actually_happens():
+    """A sign saying "banned" over a trap that kicks teaches people to ignore
+    the sign."""
+    import security
+    from cogs.security import honeypot_warning
+
+    kicked = honeypot_warning(security.ACTION_KICK)
+    assert "kicked" in kicked and "banned" not in kicked
+
+    banned = honeypot_warning(security.ACTION_BAN)
+    assert "banned" in banned
+
+    timed_out = honeypot_warning(security.ACTION_TIMEOUT)
+    assert "24 hours" in timed_out
+
+    alert = honeypot_warning(security.ACTION_ALERT)
+    assert "staff" in alert and "banned" not in alert
+
+
+def test_going_live_needs_permission_for_the_honeypot_action_too():
+    """Kick Members is a different permission from Ban Members — a honeypot that
+    kicks while the bot can only ban would fail silently at the moment it fires."""
+    from cogs.security import missing_action_permission
+
+    import security
+
+    class Perms:
+        ban_members = True
+        kick_members = False
+        moderate_members = True
+
+    class Guild:
+        class me:
+            guild_permissions = Perms()
+
+    assert missing_action_permission(Guild(), security.ACTION_BAN) is None
+    blocker = missing_action_permission(Guild(), security.ACTION_KICK)
+    assert blocker and "Kick Members" in blocker
+
+
+# --------------------------------------------------------------------------
 # re-running setup must not quietly undo settings
 # --------------------------------------------------------------------------
 

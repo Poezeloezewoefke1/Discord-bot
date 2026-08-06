@@ -10,6 +10,11 @@ import config
 import db
 
 
+# Discord rejects an embed whose title, description, fields and footer add up to
+# more than this, regardless of each part being within its own limit.
+EMBED_TOTAL_LIMIT = 6000
+
+
 def _mention(user_id: int | None) -> str:
     return f"<@{user_id}>" if user_id else "—"
 
@@ -486,6 +491,156 @@ def upload_announcement(video, creator_name: str) -> discord.Embed:
     if video.thumbnail:
         embed.set_image(url=video.thumbnail)
     embed.set_footer(text="YouTube")
+    return embed
+
+
+# --------------------------------------------------------------------------
+# applications
+# --------------------------------------------------------------------------
+
+def application_panel(guild: discord.Guild, forms) -> discord.Embed:
+    """The always-there message people press to apply."""
+    lines = []
+    for form in forms:
+        emoji = form["emoji"] or "📄"
+        state = "" if form["is_open"] else "  *(closed)*"
+        blurb = form["blurb"] or ""
+        lines.append(f"{emoji} **{form['label']}**{state}\n{blurb}".rstrip())
+
+    if not lines:
+        lines = ["*No positions are open yet.*"]
+
+    embed = discord.Embed(
+        title="📥 Applications",
+        description=(
+            "Pick what you'd like to apply for. You'll get a short form to fill in, "
+            "and a DM when staff have decided.\n\n" + "\n\n".join(lines)
+        )[:4096],
+        color=config.COLOR_CLAIMED,
+    )
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    embed.set_footer(
+        text="Make sure your DMs from server members are on, or you won't get the answer."
+    )
+    return embed
+
+
+def application_card(application, applicant: discord.abc.User | None) -> discord.Embed:
+    """What staff review: the answers, who wrote them, and how old the account is."""
+    import applications as apply_lib
+
+    status = application["status"]
+    emoji, wording = apply_lib.status_face(status)
+    colour = {
+        apply_lib.STATUS_ACCEPTED: config.COLOR_DONE,
+        apply_lib.STATUS_DENIED: config.COLOR_ERROR,
+        apply_lib.STATUS_WITHDRAWN: config.COLOR_GOODBYE,
+    }.get(status, config.COLOR_OPEN)
+
+    embed = discord.Embed(
+        title=f"{emoji} {application['form_label'] or 'Application'} · #{application['id']:04d}",
+        color=colour,
+        timestamp=discord.utils.utcnow(),
+    )
+    embed.add_field(name="Applicant", value=_mention(application["applicant_id"]), inline=True)
+    embed.add_field(name="Status", value=wording, inline=True)
+
+    if applicant is not None:
+        embed.set_thumbnail(url=applicant.display_avatar.url)
+        created = getattr(applicant, "created_at", None)
+        if created is not None:
+            embed.add_field(
+                name="Account made", value=f"<t:{int(created.timestamp())}:R>", inline=True
+            )
+
+    # Every field is individually capped at 1024, but Discord *also* rejects an
+    # embed whose parts add up to more than 6000 — and five long answers plus a
+    # rejection note clears that easily. So the answers are packed into whatever
+    # room is left once the decision note has been set aside.
+    decided_note = ""
+    if application["decided_by"]:
+        decided_note = f"{_mention(application['decided_by'])} · {_relative(application['decided_at'])}"
+        if application["decision_note"]:
+            decided_note += f"\n> {application['decision_note'][:900]}"
+
+    reserved = len(decided_note) + len("Decided by") + 40  # 40: footer and slack
+    answers = apply_lib.answers_from_json(application["answers"])
+    left_out = 0
+
+    for index, (question, answer) in enumerate(answers):
+        name = (question[:100] or "—")
+        room = min(1024, EMBED_TOTAL_LIMIT - len(embed) - len(name) - reserved)
+        # Below this there isn't enough of an answer left to be worth showing.
+        if room < 64:
+            left_out = len(answers) - index
+            break
+        embed.add_field(name=name, value=(answer[:room] or "*(blank)*"), inline=False)
+
+    if left_out:
+        embed.add_field(
+            name="…",
+            value=f"*{left_out} more answer(s) were too long to show here.*",
+            inline=False,
+        )
+
+    if decided_note:
+        embed.add_field(name="Decided by", value=decided_note, inline=False)
+    else:
+        embed.set_footer(text="Accept or deny below — the applicant gets a DM either way.")
+    return embed
+
+
+def application_decision_dm(
+    application, guild: discord.Guild, accepted: bool, role: discord.Role | None
+) -> discord.Embed:
+    """The message the applicant actually receives. This is the whole point of
+    the feature, so it says what happens next rather than just yes or no."""
+    position = application["form_label"] or "your application"
+
+    if accepted:
+        lines = [f"Your **{position}** application for **{guild.name}** was **accepted**. 🎉"]
+        if role is not None:
+            lines.append(f"You've been given the **{role.name}** role — go have a look.")
+    else:
+        lines = [
+            f"Your **{position}** application for **{guild.name}** wasn't accepted this time."
+        ]
+
+    if application["decision_note"]:
+        lines.append(f"\n**From staff:**\n> {application['decision_note'][:1500]}")
+
+    embed = discord.Embed(
+        title="✅ Application accepted" if accepted else "Application decision",
+        description="\n".join(lines),
+        color=config.COLOR_DONE if accepted else config.COLOR_GOODBYE,
+        timestamp=discord.utils.utcnow(),
+    )
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    if not accepted:
+        embed.set_footer(text="You're welcome to apply again later.")
+    return embed
+
+
+def application_list(guild: discord.Guild, rows, heading: str) -> discord.Embed:
+    import applications as apply_lib
+
+    lines = []
+    for row in rows:
+        emoji, _ = apply_lib.status_face(row["status"])
+        answers = apply_lib.answers_from_json(row["answers"])
+        lines.append(
+            f"{emoji} `#{row['id']:04d}` **{row['form_label'] or row['form_key']}** — "
+            f"{_mention(row['applicant_id'])} · {apply_lib.summarise(answers, 60)}"
+        )
+
+    embed = discord.Embed(
+        title=f"📥 {heading}",
+        description=_fit(lines, 4000) if lines else "*Nothing here.*",
+        color=config.COLOR_CLAIMED,
+    )
+    embed.set_footer(text="Open one with /application <number>")
     return embed
 
 

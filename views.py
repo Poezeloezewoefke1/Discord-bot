@@ -448,6 +448,196 @@ def ticket_closed_view(ticket_id: int) -> discord.ui.View:
     return view
 
 
+# --------------------------------------------------------------------------
+# applications
+# --------------------------------------------------------------------------
+
+async def _call_applications(interaction: discord.Interaction, method: str, *args) -> None:
+    cog = interaction.client.get_cog("ApplicationsCog")
+    if cog is None:
+        await interaction.response.send_message(
+            embed=embeds.error("Applications aren't loaded right now. Try again in a minute."),
+            ephemeral=True,
+        )
+        return
+    await _guard(interaction, getattr(cog, method)(interaction, *args))
+
+
+def _form_emoji(form) -> str | None:
+    import applications as apply_lib
+
+    value = form["emoji"] if form is not None else None
+    return value if apply_lib.looks_like_emoji(value) else None
+
+
+class ApplicationModal(discord.ui.Modal):
+    """The form itself, built from whatever questions the position has.
+
+    Discord allows five inputs, which is why /apply-form takes five questions and
+    no more — the limit is the API's, not a choice.
+    """
+
+    def __init__(self, form) -> None:
+        import applications as apply_lib
+
+        super().__init__(title=f"Apply · {form['label']}"[:45])
+        self.form_key = form["key"]
+        self.questions = apply_lib.questions_from_json(form["questions"])
+        self.inputs: list[discord.ui.TextInput] = []
+
+        for question in self.questions[: apply_lib.MAX_QUESTIONS]:
+            field = discord.ui.TextInput(
+                label=question["label"][: apply_lib.MAX_QUESTION_LABEL],
+                style=(
+                    discord.TextStyle.paragraph
+                    if question["long"]
+                    else discord.TextStyle.short
+                ),
+                placeholder=question["placeholder"] or None,
+                max_length=apply_lib.MAX_ANSWER,
+                required=question["required"],
+            )
+            self.inputs.append(field)
+            self.add_item(field)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        pairs = [
+            (question["label"], str(field))
+            for question, field in zip(self.questions, self.inputs)
+        ]
+        await _call_applications(interaction, "submit_application", self.form_key, pairs)
+
+
+class ApplyButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    # The key is restricted to this charset by applications.slug() precisely so
+    # it can be parsed back out of a custom_id after a restart.
+    template=r"ap:go:(?P<key>[a-z0-9-]{1,20})",
+):
+    def __init__(self, key: str, label: str = "Apply", emoji: str | None = None) -> None:
+        self.key = key
+        super().__init__(
+            discord.ui.Button(
+                label=label[:80],
+                emoji=emoji,
+                style=discord.ButtonStyle.primary,
+                custom_id=f"ap:go:{key}",
+            )
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match: re.Match[str], /):
+        # Restored from a panel posted before the last restart: the label on
+        # screen is whatever Discord already has, so only the key matters here.
+        return cls(match["key"])
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        cog = interaction.client.get_cog("ApplicationsCog")
+        if cog is None:
+            await interaction.response.send_message(
+                embed=embeds.error("Applications aren't loaded right now. Try again in a minute."),
+                ephemeral=True,
+            )
+            return
+
+        # Check before showing the form — nobody should type five answers and
+        # only then be told applications are closed.
+        form = db.get_form(interaction.guild.id, self.key)
+        blocker = await cog.why_cannot_apply(interaction, form)
+        if blocker:
+            await interaction.response.send_message(
+                embed=embeds.notice(blocker), ephemeral=True
+            )
+            return
+        await interaction.response.send_modal(ApplicationModal(form))
+
+
+class ApplicationAcceptButton(
+    discord.ui.DynamicItem[discord.ui.Button], template=r"ap:yes:(?P<application_id>\d+)"
+):
+    def __init__(self, application_id: int) -> None:
+        self.application_id = application_id
+        super().__init__(
+            discord.ui.Button(
+                label="Accept",
+                emoji="✅",
+                style=discord.ButtonStyle.success,
+                custom_id=f"ap:yes:{application_id}",
+            )
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match: re.Match[str], /):
+        return cls(int(match["application_id"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await _call_applications(interaction, "accept_application", self.application_id, None)
+
+
+class ApplicationDenyButton(
+    discord.ui.DynamicItem[discord.ui.Button], template=r"ap:no:(?P<application_id>\d+)"
+):
+    def __init__(self, application_id: int) -> None:
+        self.application_id = application_id
+        super().__init__(
+            discord.ui.Button(
+                label="Deny",
+                emoji="✖️",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"ap:no:{application_id}",
+            )
+        )
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match: re.Match[str], /):
+        return cls(int(match["application_id"]))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        cog = interaction.client.get_cog("ApplicationsCog")
+        if cog is not None and not cog.is_reviewer(interaction.user):
+            await interaction.response.send_message(
+                embed=embeds.error("Only staff can decide on applications."), ephemeral=True
+            )
+            return
+        await interaction.response.send_modal(DenyReasonModal(self.application_id))
+
+
+class DenyReasonModal(discord.ui.Modal, title="Turn this application down"):
+    """A reason is optional but strongly nudged: a bare "no" in a DM is the
+    thing people complain about, and staff rarely go back to explain."""
+
+    reason = discord.ui.TextInput(
+        label="Why? (the applicant will see this)",
+        style=discord.TextStyle.paragraph,
+        placeholder="Leave blank to send no reason at all.",
+        max_length=1000,
+        required=False,
+    )
+
+    def __init__(self, application_id: int) -> None:
+        super().__init__()
+        self.application_id = application_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        note = str(self.reason).strip() or None
+        await _call_applications(interaction, "deny_application", self.application_id, note)
+
+
+def application_panel_view(forms) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    # Five rows of five is Discord's hard cap on one message.
+    for form in list(forms)[:25]:
+        view.add_item(ApplyButton(form["key"], form["label"], _form_emoji(form)))
+    return view
+
+
+def application_review_view(application_id: int) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(ApplicationAcceptButton(application_id))
+    view.add_item(ApplicationDenyButton(application_id))
+    return view
+
+
 DYNAMIC_ITEMS = (
     ClaimButton,
     UpdateButton,
@@ -461,6 +651,9 @@ DYNAMIC_ITEMS = (
     TicketReopenButton,
     TicketTranscriptButton,
     TicketDeleteButton,
+    ApplyButton,
+    ApplicationAcceptButton,
+    ApplicationDenyButton,
 )
 
 

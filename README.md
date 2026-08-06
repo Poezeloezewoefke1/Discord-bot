@@ -187,6 +187,14 @@ To back up or reset everything, that one branch is all your data.
 | `/ticket-panel` | Admins | Posts the panel again if it gets deleted |
 | `/ticket-add` | Support | Adds someone to the ticket you're in |
 | `/ticket-close` | Support / opener | Closes the ticket you're in |
+| `/apply` | Anyone | Applies for a position |
+| `/apply-setup` | Admins | Sets up applications and posts the panel |
+| `/apply-panel` | Admins | Posts the apply panel again |
+| `/apply-form` | Admins | Adds or edits a position and its questions |
+| `/apply-form-delete` | Admins | Removes a position |
+| `/apply-toggle` | Admins | Opens or closes applications for one position |
+| `/applications [status]` | Staff | Lists applications |
+| `/application <number>` | Staff | Shows one application in full |
 
 Everything the bot says back to you is ephemeral — only you see it, so channels stay clean.
 Build numbers autocomplete as you type, and `/update` and `/release` list *your* builds first.
@@ -387,13 +395,35 @@ and take no action until you say so.
 
 | Protection | What it catches |
 |---|---|
-| **Honeypot channel** | Spam bots blast every channel they can see. This one is labelled "posting here = ban", so only a bot walks in. The most effective of the four. |
+| **Honeypot channel** | Spam bots blast every channel they can see. This one is labelled "don't post here", so only a bot walks in. The most effective of the four. |
 | **Anti-raid** | A burst of joins — 10 in 60 seconds by default — alerts staff instead of you finding out from the spam. |
 | **New-account gate** | Flags accounts created in the last 7 days. Raid accounts are nearly always fresh. |
 | **Scam links** | Fake Nitro/Steam domains. Needs an extra intent — see below. |
 
 `/security-setup` posts and pins the warning in the honeypot channel itself. Don't remove it: an
 unlabelled honeypot catches curious members instead of bots.
+
+### The honeypot kicks, it doesn't ban
+
+The honeypot has its **own** action, separate from the one every other protection uses, and it
+defaults to **kick**.
+
+That's deliberate. The honeypot fires on a single message with no second signal — one curious
+member clicking into the wrong channel is enough. A kick is recoverable: they can be invited
+straight back. A ban, on a server this size, effectively isn't. The other protections have more to
+go on before they act, so they keep whatever `action:` you set.
+
+```
+/security-setup log_channel:#mod-log honeypot_action:Ban    # if you really want a ban
+```
+
+The pinned warning is generated from the action, so it says "kicked" when it kicks and "banned"
+when it bans — a sign that names the wrong consequence just teaches people to ignore the sign. If
+you change the action, re-run `/security-setup` with `honeypot_channel:` to repost it.
+
+Going live checks the permission for **both** actions. Kick Members and Ban Members are separate
+permissions, so a honeypot set to kick on a bot that can only ban would fail silently at the exact
+moment it mattered.
 
 ### Watch mode
 
@@ -472,6 +502,77 @@ flagged, add it to `ALLOWED_DOMAINS` in `security.py`.
 Honeypot and bots like it draw on a shared database of known raiders across thousands of servers.
 That's a network effect, not code, and it isn't reproduced here. This catches accounts that
 misbehave *on your server* — it doesn't know an account was banned elsewhere.
+
+## Applications
+
+A panel of buttons, one per position. Pressing one opens a form; submitting it drops the answers
+into a staff-only channel with **Accept** and **Deny** on them. Either way the applicant gets a DM,
+and accepting hands out the role.
+
+```
+/apply-setup review_channel:#staff-applications panel_channel:#apply reviewer_role:@Staff
+```
+
+That creates three positions to start with — **Builder**, **Script writer** and **Staff / helper** —
+with questions written for a Minecraft server. Builder and Script writer are wired to the roles
+`/setup` already knows about, so you aren't asked for them twice.
+
+```
+📥 Applications
+
+🔨 Builder
+Build the things the script writers dream up.
+
+📜 Script writer
+Write the events and storylines the server runs on.
+
+🛡️ Staff / helper
+Keep chat friendly and help people out.
+
+[🔨 Builder]  [📜 Script writer]  [🛡️ Staff / helper]
+```
+
+### Changing the questions
+
+```
+/apply-form label:Builder role:@Builder question1:Your Minecraft username
+            question2:How old are you? question3:What have you built before?
+```
+
+Five questions maximum — that's Discord's cap on a form, not a choice. Each question is capped at
+45 characters for the same reason. Both are checked before saving, with the offending question
+named, rather than letting Discord reject the form later.
+
+Editing a position by name **keeps** anything you don't mention: `/apply-form label:Builder
+question1:...` changes the questions and leaves the role and blurb alone. Positions are matched on
+a key derived from the name, so re-using the name edits rather than duplicating.
+
+`/apply-toggle position:Builder open:False` closes one without deleting it — the panel says
+*(closed)* and the button refuses politely.
+
+### Three things that go wrong, and what happens instead
+
+**The applicant never hears back.** Most people have DMs from strangers turned off, so the DM fails
+and nothing says so. Every failed DM is reported straight back to whoever pressed the button:
+*"@Someone has DMs closed, so they haven't been told."*
+
+**The role doesn't get handed out.** Discord refuses to let a bot give out a role above its own,
+with a bare 403. That's checked when you set the position up, again in `/test`, and again at the
+moment of accepting — and reported with the actual fix, not the error code. The decision is still
+recorded either way.
+
+**Two staff decide at once.** Accept and Deny in the same second would otherwise send the applicant
+both answers. The decision is a single conditional write, so the second person is told
+*"already decided — accepted by @Someone"* and nothing is sent twice.
+
+### Applying twice
+
+One application per position at a time, and after being turned down there's a **7-day wait** before
+reapplying for that same position (`cooldown_days:` to change it, `0` to allow it immediately).
+Somebody who already holds the role is told so rather than being allowed to apply again.
+
+Everything is checked *before* the form opens, so nobody fills in five answers and only then learns
+applications were closed.
 
 ## Notes
 

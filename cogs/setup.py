@@ -124,6 +124,24 @@ class SetupCog(commands.Cog):
             inline=False,
         )
 
+        forms = db.list_forms(interaction.guild.id)
+        positions = (
+            ", ".join(
+                f"{f['label']}{'' if f['is_open'] else ' (closed)'}" for f in forms
+            )
+            or "*none*"
+        )
+        embed.add_field(
+            name="📥 Applications",
+            value=(
+                f"Review: {channel(cfg['apply_review_channel_id'])}\n"
+                f"Panel: {channel(cfg['apply_panel_channel_id'])}\n"
+                f"Reviewers: {role(cfg['apply_reviewer_role_id'])}\n"
+                f"Positions: {positions}"
+            )[:1024],
+            inline=False,
+        )
+
         counts = {
             status: len(db.list_builds(interaction.guild.id, status))
             for status in (db.STATUS_OPEN, db.STATUS_CLAIMED, db.STATUS_COMPLETE)

@@ -34,6 +34,13 @@ ACTION_ALERT = "alert"
 ACTION_NONE = "none"
 
 DEFAULT_ACTION = ACTION_BAN
+
+# The honeypot has its own action, and it is deliberately *not* a ban. It fires
+# on a single message with no second signal, so the cost of being wrong is a
+# curious member removed permanently. A kick is reversible: they can be invited
+# back. Staff can raise it with /security-setup honeypot_action if they want to.
+HONEYPOT_DEFAULT_ACTION = ACTION_KICK
+
 DEFAULT_MIN_ACCOUNT_AGE_DAYS = 7
 DEFAULT_RAID_JOIN_COUNT = 10
 DEFAULT_RAID_WINDOW_SECONDS = 60

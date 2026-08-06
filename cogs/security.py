@@ -24,12 +24,29 @@ from views import security_alert_view
 
 log = logging.getLogger(__name__)
 
-HONEYPOT_WARNING = (
-    "# ⛔ DO NOT POST HERE\n"
-    "This channel is a trap for spam bots.\n\n"
-    "**Posting anything here will get you banned automatically.**\n"
-    "There is nothing to see and nothing to do — just leave it alone."
-)
+def honeypot_warning(action: str) -> str:
+    """The pinned notice. It has to name the real consequence — a sign that says
+    "banned" over a trap that kicks trains people to ignore the sign."""
+    consequence = {
+        security.ACTION_BAN: "**get you banned automatically**",
+        security.ACTION_KICK: "**get you kicked from the server automatically**",
+        security.ACTION_TIMEOUT: "**mute you for 24 hours automatically**",
+    }.get(action, "**be reported to staff automatically**")
+    return (
+        "# ⛔ DO NOT POST HERE\n"
+        "This channel is a trap for spam bots.\n\n"
+        f"Posting anything here will {consequence}.\n"
+        "There is nothing to see and nothing to do — just leave it alone."
+    )
+
+
+def honeypot_action(cfg) -> str:
+    """What the honeypot does. Separate from the action every other protection
+    uses: one stray message is thin evidence, so the default here is a kick even
+    when the rest of the protections ban."""
+    if cfg is None:
+        return security.HONEYPOT_DEFAULT_ACTION
+    return cfg["honeypot_action"] or security.HONEYPOT_DEFAULT_ACTION
 
 
 def missing_action_permission(guild: discord.Guild, action: str) -> str | None:
@@ -117,9 +134,7 @@ class SecurityCog(commands.Cog):
         try:
             await channel.send(
                 embed=embeds.trap_armed(
-                    message.author,
-                    message.channel.id,
-                    cfg["security_action"] or security.DEFAULT_ACTION,
+                    message.author, message.channel.id, honeypot_action(cfg)
                 )
             )
         except discord.HTTPException:
@@ -223,7 +238,7 @@ class SecurityCog(commands.Cog):
                     security.REASON_HONEYPOT,
                     f"Posted in {message.channel.mention}, which nobody should ever post in.",
                     watch_only(cfg),
-                    cfg["security_action"],
+                    honeypot_action(cfg),
                 ),
             )
             return
@@ -298,6 +313,7 @@ class SecurityCog(commands.Cog):
         raid_seconds="...within how many seconds",
         scam_scanning="Watch messages for fake Nitro/Steam links",
         action="What to do when something trips (starts in watch mode regardless)",
+        honeypot_action="What the honeypot specifically does — kick by default",
     )
     @app_commands.choices(
         action=[
@@ -305,7 +321,13 @@ class SecurityCog(commands.Cog):
             app_commands.Choice(name="Kick", value=security.ACTION_KICK),
             app_commands.Choice(name="Timeout for 24h", value=security.ACTION_TIMEOUT),
             app_commands.Choice(name="Alert staff only", value=security.ACTION_ALERT),
-        ]
+        ],
+        honeypot_action=[
+            app_commands.Choice(name="Kick (recommended)", value=security.ACTION_KICK),
+            app_commands.Choice(name="Ban", value=security.ACTION_BAN),
+            app_commands.Choice(name="Timeout for 24h", value=security.ACTION_TIMEOUT),
+            app_commands.Choice(name="Alert staff only", value=security.ACTION_ALERT),
+        ],
     )
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.guild_only()
@@ -319,6 +341,7 @@ class SecurityCog(commands.Cog):
         raid_seconds: app_commands.Range[int, 5, 3600] | None = None,
         scam_scanning: bool | None = None,
         action: app_commands.Choice[str] | None = None,
+        honeypot_action: app_commands.Choice[str] | None = None,
     ) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
 
@@ -376,6 +399,13 @@ class SecurityCog(commands.Cog):
             "security_action": keep(
                 "security_action", action.value if action else None, security.ACTION_BAN
             ),
+            # Note the parameter above shadows the module-level honeypot_action()
+            # helper inside this method, so this reads the column directly.
+            "honeypot_action": keep(
+                "honeypot_action",
+                honeypot_action.value if honeypot_action else None,
+                security.HONEYPOT_DEFAULT_ACTION,
+            ),
         }
         # The honeypot channel is only changed when one is named, so re-running
         # the command without it doesn't quietly disarm the trap.
@@ -388,11 +418,12 @@ class SecurityCog(commands.Cog):
 
         db.save_config(interaction.guild.id, **settings)
 
+        cfg = db.get_config(interaction.guild.id)
+
         posted = ""
         if honeypot_channel is not None:
-            posted = await self.post_honeypot_warning(honeypot_channel)
+            posted = await self.post_honeypot_warning(honeypot_channel, cfg["honeypot_action"])
 
-        cfg = db.get_config(interaction.guild.id)
         if watch_only(cfg):
             mode_line = (
                 "🔍 **Watch mode is on** — it will only report, not act. "
@@ -412,7 +443,7 @@ class SecurityCog(commands.Cog):
             embed=embeds.success(
                 "**Protection configured.**\n"
                 f"📋 Alerts: {log_channel.mention}\n"
-                f"🍯 Honeypot: {honeypot_line}\n"
+                f"🍯 Honeypot: {honeypot_line} → **{cfg['honeypot_action']}**\n"
                 f"🕑 New accounts: under {cfg['min_account_age_days']} days\n"
                 f"🌊 Raid: {cfg['raid_join_count']} joins in {cfg['raid_window_seconds']}s\n"
                 f"🎣 Scam links: {'on' if cfg['scam_scanning'] else 'off'}\n"
@@ -422,10 +453,10 @@ class SecurityCog(commands.Cog):
             ephemeral=True,
         )
 
-    async def post_honeypot_warning(self, channel: discord.TextChannel) -> str:
+    async def post_honeypot_warning(self, channel: discord.TextChannel, action: str) -> str:
         """A honeypot with no warning catches curious members instead of bots."""
         try:
-            message = await channel.send(HONEYPOT_WARNING)
+            message = await channel.send(honeypot_warning(action))
         except discord.HTTPException:
             return f"\n\n⚠️ Couldn't post the warning in {channel.mention} — post one yourself."
         try:
@@ -450,6 +481,7 @@ class SecurityCog(commands.Cog):
 
         guild = interaction.guild
         action = cfg["security_action"] or security.DEFAULT_ACTION
+        trap_action = honeypot_action(cfg)
         lines = []
 
         if watch_only(cfg):
@@ -459,16 +491,19 @@ class SecurityCog(commands.Cog):
             )
         else:
             lines.append(f"🛡️ **Live** — a trip results in: **{action}**.")
-            blocker = missing_action_permission(guild, action)
-            if blocker:
-                lines.append(f"❌ **But it can't act:** {blocker}")
+            for what, which in (("", action), ("honeypot ", trap_action)):
+                blocker = missing_action_permission(guild, which)
+                if blocker:
+                    lines.append(f"❌ **But it can't {what}act:** {blocker}")
 
         if cfg["honeypot_channel_id"]:
             channel = guild.get_channel(cfg["honeypot_channel_id"])
             if channel is None:
                 lines.append("❌ Honeypot channel was deleted — re-run `/security-setup`.")
             else:
-                lines.append(f"🍯 Honeypot: {channel.mention} — armed.")
+                lines.append(
+                    f"🍯 Honeypot: {channel.mention} — armed, and a trip means **{trap_action}**."
+                )
         else:
             lines.append("• Honeypot: *none set*")
 
@@ -494,13 +529,14 @@ class SecurityCog(commands.Cog):
             lines.append(
                 "\n---\n"
                 "⚠️ **You personally are exempt.** Staff are never actioned, so posting in the "
-                "honeypot yourself will *not* ban you — the log will just note the trap is armed.\n"
+                "honeypot yourself will do nothing to you — the log will just note the trap is "
+                "armed.\n"
                 "To see it work for real, post from an account with no staff permissions."
             )
         else:
             lines.append(
                 "\n---\n"
-                f"You are **not** exempt — posting in the honeypot would get you **{action}**."
+                f"You are **not** exempt — posting in the honeypot would get you **{trap_action}**."
             )
 
         await interaction.response.send_message(
@@ -531,19 +567,23 @@ class SecurityCog(commands.Cog):
 
         watching = mode.value == "watch"
         action = cfg["security_action"] or security.DEFAULT_ACTION
+        trap_action = honeypot_action(cfg)
 
-        # Refuse to claim protection the bot can't deliver.
+        # Refuse to claim protection the bot can't deliver. Both actions are
+        # checked: the honeypot may kick while everything else bans, and missing
+        # Kick Members would leave the trap quietly unable to fire.
         if not watching:
-            blocker = missing_action_permission(interaction.guild, action)
-            if blocker:
-                await interaction.response.send_message(
-                    embed=embeds.error(
-                        f"**Not switching to live — I couldn't enforce it.**\n\n{blocker}\n\n"
-                        "Staying in watch mode. Fix that and run this again."
-                    ),
-                    ephemeral=True,
-                )
-                return
+            for which in dict.fromkeys((action, trap_action)):
+                blocker = missing_action_permission(interaction.guild, which)
+                if blocker:
+                    await interaction.response.send_message(
+                        embed=embeds.error(
+                            f"**Not switching to live — I couldn't enforce it.**\n\n{blocker}\n\n"
+                            "Staying in watch mode. Fix that and run this again."
+                        ),
+                        ephemeral=True,
+                    )
+                    return
 
         db.save_config(interaction.guild.id, security_watch_only=1 if watching else 0)
 
@@ -553,6 +593,7 @@ class SecurityCog(commands.Cog):
             message = (
                 f"🛡️ **Live.** Trips will now result in: **{action}**, and I have the "
                 f"permission to do it.\n"
+                f"🍯 The honeypot is separate and results in: **{trap_action}**.\n"
                 "Staff are still never actioned. Switch back any time with "
                 "`/security-mode watch`."
             )

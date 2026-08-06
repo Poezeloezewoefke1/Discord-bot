@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS guild_config (
     honeypot_channel_id    INTEGER,
     security_watch_only    INTEGER,
     security_action        TEXT,
+    honeypot_action        TEXT,
     min_account_age_days   INTEGER,
     raid_join_count        INTEGER,
     raid_window_seconds    INTEGER,
@@ -85,6 +86,41 @@ CREATE TABLE IF NOT EXISTS tickets (
     closed_by    INTEGER,
     close_reason TEXT
 );
+
+CREATE TABLE IF NOT EXISTS application_forms (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id   INTEGER NOT NULL,
+    key        TEXT    NOT NULL,
+    label      TEXT    NOT NULL,
+    emoji      TEXT,
+    blurb      TEXT,
+    role_id    INTEGER,
+    questions  TEXT    NOT NULL,
+    is_open    INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT    NOT NULL,
+    UNIQUE (guild_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS applications (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id      INTEGER NOT NULL,
+    form_key      TEXT    NOT NULL,
+    form_label    TEXT,
+    applicant_id  INTEGER NOT NULL,
+    answers       TEXT    NOT NULL,
+    status        TEXT    NOT NULL DEFAULT 'pending',
+    message_id    INTEGER,
+    channel_id    INTEGER,
+    created_at    TEXT    NOT NULL,
+    decided_at    TEXT,
+    decided_by    INTEGER,
+    decision_note TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_applications_guild_status
+    ON applications (guild_id, status);
+CREATE INDEX IF NOT EXISTS idx_applications_person
+    ON applications (guild_id, form_key, applicant_id, id);
 
 CREATE TABLE IF NOT EXISTS youtube_feeds (
     handle        TEXT PRIMARY KEY,
@@ -164,6 +200,7 @@ LATER_CONFIG_COLUMNS = (
     ("honeypot_channel_id", "INTEGER"),
     ("security_watch_only", "INTEGER"),
     ("security_action", "TEXT"),
+    ("honeypot_action", "TEXT"),
     ("min_account_age_days", "INTEGER"),
     ("raid_join_count", "INTEGER"),
     ("raid_window_seconds", "INTEGER"),
@@ -176,6 +213,12 @@ LATER_CONFIG_COLUMNS = (
     ("ticket_panel_message_id", "INTEGER"),
     # upload notifications
     ("notify_channel_id", "INTEGER"),
+    # applications
+    ("apply_review_channel_id", "INTEGER"),
+    ("apply_panel_channel_id", "INTEGER"),
+    ("apply_panel_message_id", "INTEGER"),
+    ("apply_reviewer_role_id", "INTEGER"),
+    ("apply_cooldown_days", "INTEGER"),
 )
 
 LATER_CONFIG_NAMES = tuple(name for name, _ in LATER_CONFIG_COLUMNS)
@@ -600,6 +643,189 @@ def list_tickets(guild_id: int, status: str | None = None) -> list[sqlite3.Row]:
         return conn.execute(
             "SELECT * FROM tickets WHERE guild_id = ? ORDER BY id", (guild_id,)
         ).fetchall()
+
+
+# --------------------------------------------------------------------------
+# applications
+# --------------------------------------------------------------------------
+
+APPLY_PENDING = "pending"
+APPLY_ACCEPTED = "accepted"
+APPLY_DENIED = "denied"
+APPLY_WITHDRAWN = "withdrawn"
+
+
+def save_form(
+    guild_id: int,
+    key: str,
+    label: str,
+    questions: str,
+    emoji: str | None = None,
+    blurb: str | None = None,
+    role_id: int | None = None,
+) -> None:
+    """Create or update a position.
+
+    Editing rather than replacing matters: the key is baked into the panel
+    button's custom_id, so a form that is deleted and recreated would leave every
+    already-posted panel button pointing at nothing.
+    """
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO application_forms
+                   (guild_id, key, label, emoji, blurb, role_id, questions, is_open, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+               ON CONFLICT (guild_id, key) DO UPDATE SET
+                   label = excluded.label,
+                   emoji = excluded.emoji,
+                   blurb = excluded.blurb,
+                   role_id = excluded.role_id,
+                   questions = excluded.questions""",
+            (guild_id, key, label, emoji, blurb, role_id, questions, now_iso()),
+        )
+
+
+def get_form(guild_id: int, key: str) -> sqlite3.Row | None:
+    with connect() as conn:
+        return conn.execute(
+            "SELECT * FROM application_forms WHERE guild_id = ? AND key = ?", (guild_id, key)
+        ).fetchone()
+
+
+def list_forms(guild_id: int, only_open: bool = False) -> list[sqlite3.Row]:
+    with connect() as conn:
+        if only_open:
+            return conn.execute(
+                "SELECT * FROM application_forms WHERE guild_id = ? AND is_open = 1 ORDER BY id",
+                (guild_id,),
+            ).fetchall()
+        return conn.execute(
+            "SELECT * FROM application_forms WHERE guild_id = ? ORDER BY id", (guild_id,)
+        ).fetchall()
+
+
+def set_form_open(guild_id: int, key: str, is_open: bool) -> bool:
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE application_forms SET is_open = ? WHERE guild_id = ? AND key = ?",
+            (1 if is_open else 0, guild_id, key),
+        )
+        return cur.rowcount == 1
+
+
+def delete_form(guild_id: int, key: str) -> bool:
+    """Remove a position. Applications already submitted for it are kept —
+    they're the record of a decision somebody was told about."""
+    with connect() as conn:
+        cur = conn.execute(
+            "DELETE FROM application_forms WHERE guild_id = ? AND key = ?", (guild_id, key)
+        )
+        return cur.rowcount == 1
+
+
+def create_application(
+    guild_id: int, form_key: str, form_label: str, applicant_id: int, answers: str
+) -> int:
+    with connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO applications
+                   (guild_id, form_key, form_label, applicant_id, answers, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (guild_id, form_key, form_label, applicant_id, answers, APPLY_PENDING, now_iso()),
+        )
+        return int(cur.lastrowid)
+
+
+def get_application(application_id: int) -> sqlite3.Row | None:
+    with connect() as conn:
+        return conn.execute(
+            "SELECT * FROM applications WHERE id = ?", (application_id,)
+        ).fetchone()
+
+
+def attach_application_message(application_id: int, message_id: int, channel_id: int) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE applications SET message_id = ?, channel_id = ? WHERE id = ?",
+            (message_id, channel_id, application_id),
+        )
+
+
+def pending_application_for(
+    guild_id: int, form_key: str, applicant_id: int
+) -> sqlite3.Row | None:
+    with connect() as conn:
+        return conn.execute(
+            """SELECT * FROM applications
+                WHERE guild_id = ? AND form_key = ? AND applicant_id = ? AND status = ?
+                ORDER BY id DESC LIMIT 1""",
+            (guild_id, form_key, applicant_id, APPLY_PENDING),
+        ).fetchone()
+
+
+def last_denial_for(guild_id: int, form_key: str, applicant_id: int) -> sqlite3.Row | None:
+    """Their most recent rejection for this position — what the cooldown counts from."""
+    with connect() as conn:
+        return conn.execute(
+            """SELECT * FROM applications
+                WHERE guild_id = ? AND form_key = ? AND applicant_id = ? AND status = ?
+                ORDER BY decided_at DESC, id DESC LIMIT 1""",
+            (guild_id, form_key, applicant_id, APPLY_DENIED),
+        ).fetchone()
+
+
+def decide_application(
+    application_id: int, status: str, decided_by: int, note: str | None = None
+) -> bool:
+    """Accept or deny, once. False means somebody else already decided.
+
+    Same conditional-UPDATE trick as claiming a build: two reviewers pressing
+    Accept and Deny in the same second cannot both win, so the applicant never
+    gets two contradictory DMs.
+    """
+    if status not in (APPLY_ACCEPTED, APPLY_DENIED, APPLY_WITHDRAWN):
+        raise ValueError(f"unknown application status: {status}")
+    with connect() as conn:
+        cur = conn.execute(
+            """UPDATE applications
+                  SET status = ?, decided_at = ?, decided_by = ?, decision_note = ?
+                WHERE id = ? AND status = ?""",
+            (status, now_iso(), decided_by, note, application_id, APPLY_PENDING),
+        )
+        return cur.rowcount == 1
+
+
+def delete_application(application_id: int) -> bool:
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM applications WHERE id = ?", (application_id,))
+        return cur.rowcount == 1
+
+
+def list_applications(
+    guild_id: int, status: str | None = None, form_key: str | None = None
+) -> list[sqlite3.Row]:
+    clauses = ["guild_id = ?"]
+    params: list = [guild_id]
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if form_key:
+        clauses.append("form_key = ?")
+        params.append(form_key)
+    with connect() as conn:
+        return conn.execute(
+            f"SELECT * FROM applications WHERE {' AND '.join(clauses)} ORDER BY id",
+            params,
+        ).fetchall()
+
+
+def count_applications(guild_id: int) -> dict[str, int]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS n FROM applications WHERE guild_id = ? GROUP BY status",
+            (guild_id,),
+        ).fetchall()
+    return {row["status"]: int(row["n"]) for row in rows}
 
 
 # --------------------------------------------------------------------------
