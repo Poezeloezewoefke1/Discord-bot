@@ -1,6 +1,13 @@
 discord.py>=2.7.1
 python-dotenv>=1.0.0
 
+# discord.py does `import audioop` at import time, and audioop was deleted from
+# the standard library in Python 3.13. Without this the bot doesn't fail at some
+# later point — `import discord` itself raises, so it never starts at all. Hosts
+# that offer 3.13/3.14 are common now, so the backport is pulled in there and
+# ignored everywhere else.
+audioop-lts>=0.2.1; python_version >= "3.13"
+
 # dev only
 pytest>=8.0.0
 PyYAML>=6.0          # used by the tests that check the workflow files

@@ -117,9 +117,16 @@ A panel gives you a folder and runs one command. Nothing else is needed:
 
 | Setting | Value |
 |---|---|
+| **Repository** | this repo |
+| **Branch** | `claude/builder-script-communication-q6ndma` — **not** `bot-data` |
+| **Runtime** | Python 3.11 or newer |
 | **Start command** | `python bot.py` |
-| **Python** | 3.11 or newer |
 | **Install** | `pip install -r requirements.txt` (most panels do this for you) |
+
+> **`bot-data` is not the code branch.** It holds the database and schematics and
+> nothing else — no `bot.py`. A host pointed at it clones successfully and then
+> has nothing to run. It's one line down in most branch dropdowns, so it's worth
+> checking twice.
 
 Upload the code — or point the panel at this repo and branch — and set two
 environment variables, either in the panel's variables screen or in a `.env` file

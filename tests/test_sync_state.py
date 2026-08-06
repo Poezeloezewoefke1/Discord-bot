@@ -435,6 +435,27 @@ def test_the_fetch_can_be_turned_off(workspace, monkeypatch):
     ) is False
 
 
+def test_the_bot_can_be_installed_on_a_modern_python():
+    """discord.py does `import audioop` at import time and audioop was removed
+    from the standard library in 3.13 — so on a host offering 3.13 or 3.14 the
+    bot doesn't misbehave later, it never starts."""
+    requirements = (ROOT / "requirements.txt").read_text()
+    assert "audioop-lts" in requirements
+    assert 'python_version >= "3.13"' in requirements, (
+        "the backport must be conditional, or it installs where it isn't wanted"
+    )
+
+
+def test_the_data_branch_is_not_mistaken_for_the_code_branch():
+    """A host asked to clone `bot-data` gets a database and no bot.py. The name
+    is one dropdown away from the code branch, so say so where it's read."""
+    assert "bot-data" in (ROOT / "README.md").read_text()
+    hosting = (ROOT / "README.md").read_text()
+    assert "not the code" in hosting or "no code" in hosting, (
+        "the README must warn that bot-data holds only data"
+    )
+
+
 def test_the_default_remote_is_public_so_it_needs_no_token():
     """The whole point is that it works on a host nobody configured."""
     remote = _bootstrap().DEFAULT_REMOTE
