@@ -204,6 +204,88 @@ def test_the_generic_questions_are_valid_too():
     assert apply_lib.validate_questions(apply_lib.GENERIC_QUESTIONS) == []
 
 
+def test_the_positions_this_server_recruits_for_are_all_there():
+    labels = {form["label"] for form in apply_lib.DEFAULT_FORMS}
+    assert labels == {
+        "Builder", "Script writer", "Staff / helper", "Video editor", "Promotor"
+    }
+
+
+def test_every_default_question_carries_a_hint():
+    """The label is capped at 45 characters — too short to say what a good answer
+    looks like. The placeholder is where that goes, so a question without one is
+    a question the applicant has to guess at."""
+    for form in apply_lib.DEFAULT_FORMS:
+        for question in form["questions"]:
+            assert question["placeholder"], (
+                f"{form['label']} → “{question['label']}” has no hint text"
+            )
+
+
+def test_every_position_asks_for_availability():
+    """"Are you active?" gets "yes". Hours and a timezone get something you can
+    actually plan a build week around."""
+    for form in apply_lib.DEFAULT_FORMS:
+        labels = " ".join(q["label"].lower() for q in form["questions"])
+        assert "timezone" in labels, f"{form['label']} never asks when they're around"
+
+
+def test_every_position_asks_at_least_two_open_questions():
+    """A form of one-line boxes sorts nobody: everybody's answers look the same."""
+    for form in apply_lib.DEFAULT_FORMS:
+        open_ended = [q for q in form["questions"] if q["long"]]
+        assert len(open_ended) >= 2, f"{form['label']} is all one-liners"
+
+
+def test_no_position_asks_the_same_thing_twice():
+    for form in apply_lib.DEFAULT_FORMS:
+        labels = [q["label"] for q in form["questions"]]
+        assert len(labels) == len(set(labels)), f"{form['label']} repeats a question"
+
+
+def test_default_keys_are_unique():
+    """Two positions sharing a key would leave one of them unreachable from the
+    panel, since the key is what the button carries."""
+    keys = [form["key"] for form in apply_lib.DEFAULT_FORMS]
+    assert len(keys) == len(set(keys))
+
+
+def test_setup_adds_positions_a_server_is_missing_without_touching_the_rest():
+    """Positions get added to the list over time. A server set up last month
+    should pick them up by re-running setup, not by retyping five questions."""
+    from cogs.applications import ApplicationsCog
+
+    class Guild:
+        id = GUILD
+
+    cog = ApplicationsCog(None)
+
+    # A server that already has an edited Builder and nothing else.
+    a_form(label="Builder", role_id=9999, questions=["Only question I want"])
+
+    added = cog.seed_default_forms(Guild())
+
+    assert "Video editor" in added and "Promotor" in added
+    assert "Builder" not in added, "an existing position must not be overwritten"
+
+    builder = db.get_form(GUILD, "builder")
+    assert builder["role_id"] == 9999
+    assert len(apply_lib.questions_from_json(builder["questions"])) == 1
+
+    assert len(db.list_forms(GUILD)) == len(apply_lib.DEFAULT_FORMS)
+
+
+def test_seeding_twice_adds_nothing_the_second_time():
+    from cogs.applications import ApplicationsCog
+
+    class Guild:
+        id = GUILD
+
+    cog = ApplicationsCog(None)
+    assert len(cog.seed_default_forms(Guild())) == len(apply_lib.DEFAULT_FORMS)
+    assert cog.seed_default_forms(Guild()) == []
+
+
 # --------------------------------------------------------------------------
 # answers
 # --------------------------------------------------------------------------

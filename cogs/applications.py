@@ -382,30 +382,17 @@ class ApplicationsCog(commands.Cog):
             fields["apply_cooldown_days"] = int(cooldown_days)
         db.save_config(interaction.guild.id, **fields)
 
-        # Seed the usual positions on first run so the server has something that
-        # works immediately; never touch them again after that.
-        seeded = []
-        if not db.list_forms(interaction.guild.id):
-            for form in apply_lib.DEFAULT_FORMS:
-                db.save_form(
-                    interaction.guild.id,
-                    form["key"],
-                    form["label"],
-                    apply_lib.questions_to_json(form["questions"]),
-                    emoji=form["emoji"],
-                    blurb=form["blurb"],
-                    role_id=self._guess_role(interaction.guild, form["key"]),
-                )
-                seeded.append(form["label"])
-
+        seeded = self.seed_default_forms(interaction.guild)
         posted = await self.post_panel(interaction.guild, panel_channel)
 
         extra = ""
         if seeded:
             extra = (
-                f"\n\n📄 Created **{'**, **'.join(seeded)}** to start with. "
+                f"\n\n📄 Added **{'**, **'.join(seeded)}**. "
                 "Change the questions or the role with `/apply-form`, and use "
-                "`/apply-toggle` to close one."
+                "`/apply-toggle` to close one.\n"
+                "*(Re-running this adds back any of the standard positions you've deleted — "
+                "`/apply-form-delete` them again if you don't want them.)*"
             )
         cfg = db.get_config(interaction.guild.id)
         if cfg["applications_channel_id"] and cfg["applications_channel_id"] != panel_channel.id:
@@ -426,6 +413,31 @@ class ApplicationsCog(commands.Cog):
             ),
             ephemeral=True,
         )
+
+    def seed_default_forms(self, guild: discord.Guild) -> list[str]:
+        """Create any standard position this server doesn't have yet.
+
+        Not "only on an empty server": positions get added to the list over
+        time, and a server that ran setup last month should pick those up by
+        re-running it rather than typing five questions by hand. Existing
+        positions are left completely alone, so nobody's edits get overwritten.
+        """
+        existing = {form["key"] for form in db.list_forms(guild.id)}
+        added = []
+        for form in apply_lib.DEFAULT_FORMS:
+            if form["key"] in existing:
+                continue
+            db.save_form(
+                guild.id,
+                form["key"],
+                form["label"],
+                apply_lib.questions_to_json(form["questions"]),
+                emoji=form["emoji"],
+                blurb=form["blurb"],
+                role_id=self._guess_role(guild, form["key"]),
+            )
+            added.append(form["label"])
+        return added
 
     def _guess_role(self, guild: discord.Guild, key: str) -> int | None:
         """Wire the default positions to roles this bot already knows about.

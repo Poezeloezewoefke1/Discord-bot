@@ -46,12 +46,34 @@ def q(label: str, long: bool = SHORT, placeholder: str | None = None) -> dict:
     return {"label": label, "long": long, "placeholder": placeholder, "required": True}
 
 
+# What separates a question that sorts applicants from one that doesn't:
+#
+#   * Ask for evidence, not opinions. "Show us three builds" tells you something.
+#     "Are you a good builder?" tells you nothing — nobody says no.
+#   * Ask about what they did, not what they would do. Past behaviour is hard to
+#     invent on the spot; intentions are free.
+#   * Ask something where a bad answer is visibly bad. "Would you abuse staff
+#     perms?" has one obvious answer, so it sorts nobody. "A friend of yours
+#     breaks a rule — what do you do?" genuinely splits the field.
+#   * Ask about this server's actual work. Builders here hand off schematics, so
+#     whether they know Litematica matters more than their favourite block.
+#   * Be specific about availability. "Are you active?" gets "yes". Hours and a
+#     timezone get an answer you can plan around.
+#
+# The label is capped at 45 characters, which is too short to carry nuance — so
+# the nuance lives in the placeholder, which is 100 and shows in the box as grey
+# hint text. That is where an applicant is told what a good answer looks like.
+
 # Used when somebody adds a position without saying what to ask. Better than an
 # empty form, and they can replace it with /apply-form later.
 GENERIC_QUESTIONS = [
-    q("Your Minecraft username"),
-    q("How old are you, and what timezone?", placeholder="e.g. 16, GMT+1"),
-    q("Why are you a good fit for this?", LONG),
+    q("Your Minecraft username", placeholder="Exactly as it appears in-game"),
+    q("Age, timezone, hours a week you can give", placeholder="e.g. 16, GMT+1, about 6 hours — usually evenings"),
+    q(
+        "What have you actually done before?",
+        LONG,
+        "Real examples with links if you have them. What you did, not what you'd like to do.",
+    ),
 ]
 
 # The positions a Minecraft SMP actually recruits for. These are created on first
@@ -63,45 +85,147 @@ GENERIC_QUESTIONS = [
 KEY_BUILDER = "builder"
 KEY_SCRIPTER = "script-writer"
 KEY_STAFF = "staff-helper"
+KEY_EDITOR = "video-editor"
+KEY_PROMOTOR = "promotor"
 
 DEFAULT_FORMS = (
     {
         "key": KEY_BUILDER,
         "label": "Builder",
         "emoji": "🔨",
-        "blurb": "Build the things the script writers dream up.",
+        "blurb": "Build what the script writers describe. Bring pictures — we go on what you show us, not what you say.",
         "questions": [
             q("Your Minecraft username", placeholder="Exactly as it appears in-game"),
-            q("How old are you, and what timezone?", placeholder="e.g. 16, GMT+1"),
-            q("What have you built before?", LONG, "Styles you're good at, biggest thing you've built"),
-            q("Screenshots or a portfolio link", LONG, "Imgur, YouTube, Planet Minecraft — anything we can look at"),
-            q("Why do you want to build for us?", LONG),
+            q(
+                "Show us your three best builds",
+                LONG,
+                "Screenshots, renders, a video — anything we can look at. No links, no application.",
+            ),
+            q(
+                "Biggest thing you finished, and how long",
+                LONG,
+                "Finished, not started. Half-built projects are the thing we run into most.",
+            ),
+            q(
+                "How well do you know WorldEdit + Litematica?",
+                LONG,
+                "We pass builds between people as schematics, so this matters. Be honest, we can teach.",
+            ),
+            q(
+                "Age, timezone, hours a week you can build",
+                placeholder="e.g. 16, GMT+1, around 6 hours — mostly evenings",
+            ),
         ],
     },
     {
         "key": KEY_SCRIPTER,
         "label": "Script writer",
         "emoji": "📜",
-        "blurb": "Write the events and storylines the server runs on.",
+        "blurb": "Describe the builds and write the events. Question 2 is the actual job — that's what we read first.",
         "questions": [
-            q("Your Minecraft username"),
-            q("How old are you, and what timezone?", placeholder="e.g. 16, GMT+1"),
-            q("What sort of things do you like writing?", LONG),
-            q("Give us one event idea, in a few lines", LONG, "Doesn't have to be polished — show us how you think"),
-            q("How much time can you give per week?", placeholder="Be honest — we'd rather know"),
+            q("Your Minecraft username", placeholder="Exactly as it appears in-game"),
+            q(
+                "Describe a build a builder could start today",
+                LONG,
+                "Size, theme, where it goes, what it's for. Enough that nobody has to ask you anything.",
+            ),
+            q(
+                "One event idea for the server, in 3-4 lines",
+                LONG,
+                "What happens, what players actually do, and why they'd turn up for it.",
+            ),
+            q(
+                "Anything you've written before?",
+                LONG,
+                "Lore, stories, YouTube scripts, D&D campaigns — links if you have them. 'No' is fine.",
+            ),
+            q(
+                "Age, timezone, hours a week you can give",
+                placeholder="e.g. 16, GMT+1, around 4 hours — mostly weekends",
+            ),
         ],
     },
     {
         "key": KEY_STAFF,
         "label": "Staff / helper",
         "emoji": "🛡️",
-        "blurb": "Keep chat friendly and help people out.",
+        "blurb": "Keep chat friendly and help people out. We're looking at how you handle people, not how long you've played.",
         "questions": [
-            q("Your Minecraft username"),
-            q("How old are you, and what timezone?", placeholder="e.g. 16, GMT+1"),
-            q("Have you been staff on a server before?", LONG, "Which server, what you did, why you left"),
-            q("Someone is nasty in chat — what do you do?", LONG),
-            q("How many hours a week can you be online?"),
+            q("Your Minecraft username", placeholder="Exactly as it appears in-game"),
+            q(
+                "A friend of yours breaks a rule. What now?",
+                LONG,
+                "Be honest. This is the question we care about most, and 'it depends' is a real answer.",
+            ),
+            q(
+                "Two players start arguing in chat — what now?",
+                LONG,
+                "Walk us through it, from the first message you'd send to how it ends.",
+            ),
+            q(
+                "Been staff somewhere before? What happened?",
+                LONG,
+                "Which server, what you did, why you left. 'Never' is a perfectly good answer.",
+            ),
+            q(
+                "Age, timezone, when you're usually online",
+                placeholder="e.g. 16, GMT+1, most evenings and all weekend",
+            ),
+        ],
+    },
+    {
+        "key": KEY_EDITOR,
+        "label": "Video editor",
+        "emoji": "🎬",
+        "blurb": "Cut the SMP footage into videos and shorts. Links to your work matter more than anything else here.",
+        "questions": [
+            q("Your Minecraft username", placeholder="Exactly as it appears in-game"),
+            q(
+                "Links to 2-3 edits you've made",
+                LONG,
+                "Anything we can watch. An edit we can't see doesn't count — no links, no application.",
+            ),
+            q(
+                "What do you edit with, and for how long?",
+                placeholder="Premiere, DaVinci, CapCut, After Effects… and roughly how long you've used it",
+            ),
+            q(
+                "Raw footage in — how long until it's done?",
+                LONG,
+                "For a 10-minute video. We plan uploads around this, so a realistic answer helps you.",
+            ),
+            q(
+                "Age, timezone, hours a week you can edit",
+                placeholder="e.g. 16, GMT+1, around 8 hours — mostly evenings",
+            ),
+        ],
+    },
+    {
+        "key": KEY_PROMOTOR,
+        "label": "Promotor",
+        "emoji": "📣",
+        "blurb": "Get more people onto the server. A real plan beats a big following — tell us what you'd actually do.",
+        "questions": [
+            q("Your Minecraft username", placeholder="Exactly as it appears in-game"),
+            q(
+                "Your accounts, with follower counts",
+                LONG,
+                "TikTok, YouTube, Instagram — links and rough numbers. Small is fine, made up is not.",
+            ),
+            q(
+                "What would your first week look like?",
+                LONG,
+                "Something specific we could actually check up on. 'I'll post about it' isn't a plan.",
+            ),
+            q(
+                "How do you promote us without it being spam?",
+                LONG,
+                "Mass-DMs and posting in other servers' chats get us a bad name. What do you do instead?",
+            ),
+            q(
+                "Age, timezone, hours a week you can give",
+                placeholder="e.g. 16, GMT+1, around 5 hours — mostly evenings",
+            ),
         ],
     },
 )

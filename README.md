@@ -513,24 +513,64 @@ and accepting hands out the role.
 /apply-setup review_channel:#staff-applications panel_channel:#apply reviewer_role:@Staff
 ```
 
-That creates three positions to start with — **Builder**, **Script writer** and **Staff / helper** —
-with questions written for a Minecraft server. Builder and Script writer are wired to the roles
-`/setup` already knows about, so you aren't asked for them twice.
+That creates five positions to start with, with questions written for a Minecraft server. Builder
+and Script writer are wired to the roles `/setup` already knows about, so you aren't asked for them
+twice; give the others a role with `/apply-form`.
 
 ```
 📥 Applications
 
 🔨 Builder
-Build the things the script writers dream up.
+Build what the script writers describe. Bring pictures — we go on what you
+show us, not what you say.
 
 📜 Script writer
-Write the events and storylines the server runs on.
+Describe the builds and write the events. Question 2 is the actual job —
+that's what we read first.
 
 🛡️ Staff / helper
-Keep chat friendly and help people out.
+Keep chat friendly and help people out. We're looking at how you handle
+people, not how long you've played.
 
-[🔨 Builder]  [📜 Script writer]  [🛡️ Staff / helper]
+🎬 Video editor
+Cut the SMP footage into videos and shorts. Links to your work matter more
+than anything else here.
+
+📣 Promotor
+Get more people onto the server. A real plan beats a big following.
+
+[🔨 Builder] [📜 Script writer] [🛡️ Staff / helper] [🎬 Video editor] [📣 Promotor]
 ```
+
+### How the questions are written
+
+Most application forms sort nobody, because most questions have one obvious answer. *"Would you
+abuse staff perms?"* — no. *"Are you a good builder?"* — yes. Everyone passes, and you learn
+nothing. The defaults here are built the other way round:
+
+- **Evidence over opinion.** *"Show us your three best builds"* — no links, no application. A
+  builder's work is checkable; their self-assessment isn't.
+- **What you did, not what you'd do.** *"Biggest thing you finished, and how long"* is hard to
+  invent. Intentions are free.
+- **Questions with a genuinely bad answer.** *"A friend of yours breaks a rule. What now?"* splits
+  the field, which is the entire point of asking.
+- **This server's actual work.** Builds get handed between people as schematic files, so Litematica
+  and WorldEdit matter more than a favourite block. A script writer is asked to *write a brief*,
+  because writing briefs is the job.
+- **Availability in numbers.** *"Are you active?"* gets "yes". Age, timezone and hours a week get
+  something you can plan around.
+
+Discord caps a question at 45 characters, which is far too short to explain any of that — so every
+question also carries **hint text** in the box, which is where an applicant is told what a good
+answer looks like. Tests enforce that no default question ships without one.
+
+Your own questions added with `/apply-form` don't get hint text (that would need five more
+parameters on an already long command), so write those to stand on their own.
+
+Re-running `/apply-setup` adds any standard position the server is missing and leaves the ones it
+already has completely alone — so a new position added to the bot doesn't have to be retyped by
+hand. The flip side: a standard position you deliberately deleted comes back, and needs deleting
+again.
 
 ### Changing the questions
 
