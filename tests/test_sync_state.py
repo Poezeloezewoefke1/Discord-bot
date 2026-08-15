@@ -341,15 +341,28 @@ def test_a_normal_shift_end_is_not_reported_as_a_failure():
         assert code in script, f"exit {code} is not handled"
 
 
-def test_the_workflow_can_never_start_itself():
-    """The bot now lives on an always-on machine and this workflow is only the
-    emergency fallback. A scheduled fire would put a second bot online beside
-    the real one, and every command would be answered twice."""
+def test_the_bot_starts_its_own_successor():
+    """The cron is the only thing that keeps this 24/7 — without it the bot stops
+    after one shift and stays stopped until somebody presses a button."""
     workflow = _workflow("bot.yml")
-    assert "schedule" not in _triggers(workflow), (
-        "a schedule here races the real host — starting the fallback must be a "
-        "decision somebody makes"
-    )
+    crons = [entry["cron"] for entry in _triggers(workflow)["schedule"]]
+    assert crons, "no schedule means the bot never restarts itself"
+
+    for cron in crons:
+        minute, hour, *_ = cron.split()
+        assert hour == "*", f"{cron} fires less often than hourly"
+        assert minute.isdigit(), f"{cron} should fire at a fixed minute"
+
+
+def test_a_dropped_fire_costs_less_than_an_hour():
+    """GitHub delays and sometimes skips scheduled runs. One fire an hour makes
+    that a full hour of downtime; two makes it half."""
+    crons = [entry["cron"] for entry in _triggers(_workflow("bot.yml"))["schedule"]]
+    minutes = sorted(int(cron.split()[0]) for cron in crons)
+    assert len(minutes) >= 2, "a single fire an hour has no redundancy"
+
+    gaps = [b - a for a, b in zip(minutes, minutes[1:])] + [60 - minutes[-1] + minutes[0]]
+    assert max(gaps) <= 30, f"longest gap between fires is {max(gaps)} minutes"
 
 
 def test_manual_dispatch_is_still_possible():

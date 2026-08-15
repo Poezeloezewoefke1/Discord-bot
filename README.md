@@ -89,17 +89,29 @@ it in place.
 
 ## Hosting it 24/7
 
-The bot needs a machine that stays on. It ran on GitHub Actions for a while and that worked — until
-it didn't: Actions stopped handing out runners, the scheduled restarts sat in a queue until they
-were killed, and the bot was down for six hours before anyone noticed. Actions is a build system,
-and a build system asked to be a server eventually behaves like a build system.
+The bot hosts itself out of this repo on GitHub Actions, with no server of your own.
 
-So the real host is an ordinary Linux machine, and the workflow in `.github/workflows/bot.yml` is
-now a **manual emergency fallback** with no schedule.
+Actions kills any job at 6 hours and wipes the disk between runs, so it works in shifts: each run
+hosts the bot for **5h30m** while syncing its database to the `bot-data` branch, and the schedule
+keeps a successor parked so it takes over the moment a shift ends. Nobody presses anything.
 
-### Where to run it
+The schedule fires **twice an hour**. Those fires don't start a second bot — the concurrency group
+makes each one wait its turn. Firing often is the redundancy: GitHub delays and sometimes skips
+scheduled runs, and twice an hour means a dropped fire costs 30 minutes rather than 60.
 
-Anything with systemd that stays on. In rough order of least effort:
+**This is not what Actions is for, and it has bitten once.** On 6 August GitHub simply stopped
+handing out runners: the queued restarts sat waiting until they were killed, and the bot was down
+for about six hours. Nothing in this repo can prevent that. If the bot matters enough that half a
+day offline is unacceptable, `deploy/` sets it up on a machine that stays on — same code, same
+database, and the migration is one command.
+
+**If you ever do move it, delete the `schedule:` block first.** A fire while another host is running
+puts two bots online, and every command gets answered twice.
+
+### Moving it to a machine that stays on
+
+If half a day offline is ever unacceptable, run it somewhere built for it. Anything with systemd
+that stays on, in rough order of least effort:
 
 | | |
 |---|---|

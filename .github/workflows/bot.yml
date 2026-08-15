@@ -1,16 +1,23 @@
-# EMERGENCY FALLBACK ONLY. The bot's real home is an always-on machine — see
-# deploy/ and the "Hosting" section of the README.
+# Runs the Discord bot, around the clock, out of this repo.
 #
-# This hosted the bot for a while and it worked, until it didn't: Actions stopped
-# handing out runners, scheduled restarts sat queued until they were killed, and
-# the bot was down for six hours. A build system asked to be a server behaves
-# like a build system. Keep this only for the case where the real host is off and
-# somebody needs the bot back right now.
+# Actions kills any job at 6 hours and wipes the disk between runs, so the bot
+# works in shifts: each run hosts it for 5h30m while syncing the database and
+# schematics to the `bot-data` branch, and a successor is already parked to take
+# over the moment the shift ends.
 #
-# Actions kills any job at 6 hours and wipes the disk between runs, so a run here
-# hosts the bot for 5h30m and syncs its database to the `bot-data` branch. It
-# will NOT restart itself afterwards — start it again by hand if you still need
-# it, and stop it once the real host is back.
+# Two things learned the hard way and worth keeping in mind:
+#
+#  * This is not what Actions is for, and GitHub can stop co-operating. On
+#    6 August it quit handing out runners for half a day and the bot was down
+#    until somebody noticed. Nothing here can prevent that — deploy/ has the
+#    setup for a machine that stays on, for when it matters enough.
+#  * Because the database only leaves the runner via the `bot-data` branch, that
+#    branch is the backup. It is also the thing that lets a run pick up where the
+#    last one stopped, so the two are the same mechanism.
+#
+# Cancelled runs in the Actions tab are NORMAL: each scheduled fire that arrives
+# while the bot is running becomes the parked successor and cancels the previous
+# parked one. A *failed* "Run the bot" step is the one that means something.
 
 name: Run bot
 
@@ -23,13 +30,20 @@ on:
   # hourly means that costs at most an hour of downtime rather than two. The price
   # is a steady trickle of cancelled runs in the Actions tab — each one is a
   # superseded pending run, which is normal and not a failure.
-  # Manual only. The bot lives on a machine that stays on (see deploy/) — this
-  # is the emergency fallback for when that machine is down, and nothing more.
+  # Twice an hour. This does not start a second bot — the concurrency group below
+  # makes each fire wait its turn, so all a fire does is park a successor that
+  # takes over the instant the current shift ends. That is what makes this 24/7
+  # with nobody pressing anything.
   #
-  # There is deliberately NO schedule any more. A scheduled fire here while the
-  # real host is running would put two bots online at once, and every command
-  # would be answered twice. Starting this is now always a decision somebody
-  # made, which is what you want from a fallback.
+  # Twice rather than once because a fire can be dropped: GitHub delays or skips
+  # scheduled runs under load, and on 6 August it stopped handing out runners
+  # entirely. Every half hour means a missed fire costs 30 minutes rather than 60.
+  #
+  # IMPORTANT: if the bot is ever moved to another host, delete this schedule
+  # first. Two bots online answer every command twice.
+  schedule:
+    - cron: '0 * * * *'
+    - cron: '30 * * * *'
   workflow_dispatch:
 
 # At most one bot alive at a time. A run triggered while another is in progress
